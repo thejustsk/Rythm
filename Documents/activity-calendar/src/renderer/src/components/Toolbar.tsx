@@ -4,7 +4,8 @@ const VIEWS = [
   { id: 'day', label: 'Day' },
   { id: 'week', label: 'Week' },
   { id: 'month', label: 'Month' },
-  { id: 'agenda', label: 'Agenda' }
+  { id: 'agenda', label: 'Agenda' },
+  { id: 'insights', label: 'Insights' }
 ] as const
 
 export default function Toolbar() {
@@ -65,5 +66,6 @@ function titleFor(view: string, cursor: Date): string {
     const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     return `${fmt(monday)} – ${fmt(sunday)}`
   }
+  if (view === 'insights') return 'Insights'
   return 'Agenda'
 }

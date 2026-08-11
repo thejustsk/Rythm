@@ -417,14 +417,91 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     const lbl2id = dbGet<{ id: string }>("SELECT id FROM labels WHERE name = 'Smoke Lab2'")
     check('sub-label created under parent with inherited colour', !!sub && sub.parent_id === lbl2id.id && sub.color === null, JSON.stringify(sub))
 
-    // clicking a label row toggles the filter
-    const hiddenBefore = await js(`(${labelRowJs('Sub Smoke')}).classList.contains('hidden')`)
-    await js(`(${labelRowJs('Sub Smoke')}).click()`)
+    // M6 selection filter: default all selected (empty circles, no glyphs).
+    // FIRST click = solo-select (clicked label green, everything else dimmed).
+    // Afterwards: multi-select toggles; parent with unselected children = blue plus,
+    // clicking it selects the whole group; fully-selected parent click deselects group.
+    const lbHidden = (name: string) =>
+      js(`(() => { const r = Array.from(document.querySelectorAll('.label-row')).find((x) => (x.querySelector('.label-name')?.textContent ?? '').trim() === ${JSON.stringify(name)}); return r ? r.classList.contains('hidden') : false })()`)
+    const glyphOf = (name: string) =>
+      js(`(() => { const r = Array.from(document.querySelectorAll('.label-row')).find((x) => (x.querySelector('.label-name')?.textContent ?? '').trim() === ${JSON.stringify(name)}); if (!r) return 'missing'; return (r.querySelector('.lb-check').className || '').replace('lb-check', '').trim() })()`)
+    const allChip = () => js(`!!document.querySelector('.all-chip')`)
+    const anyGlyph = () => js(`!!document.querySelector('.lb-check.tick, .lb-check.plus')`)
+    const anyCross = () => js(`!!document.querySelector('.lb-check.cross')`)
+    const walkVisible = async () => (await countBlocks('Morning walk')) > 0
+    const gymVisible = async () => (await countBlocks('Gym session')) > 0
+    const deepVisible = async () => (await countBlocks('Deep work — Project A')) > 0
+
+    // run in Week view so every day's events are visible
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+
+    check('default: no glyphs at all (empty circles)', !(await anyGlyph()) && !(await anyCross()))
+    check('default: All chip hidden (all selected)', !(await allChip()))
+    check('default: all labels show their events', (await walkVisible()) && (await gymVisible()))
+
+    // FIRST click = solo-select: Gym green, everything else dimmed, parent blue +
+    await js(`(${labelRowJs('Gym')}).click()`)
     await sleep(300)
-    const hiddenAfter = await js(`(${labelRowJs('Sub Smoke')}).classList.contains('hidden')`)
-    check('clicking label row toggles filter', !hiddenBefore && hiddenAfter)
-    await js(`(${labelRowJs('Sub Smoke')}).click()`)
+    check('first click solo-selects the label (green tick)', (await glyphOf('Gym')) === 'tick')
+    check('everything else dimmed/unselected', (await lbHidden('Fitness')) && (await lbHidden('Work')) && (await lbHidden('Personal')))
+    check('parent of the solo label shows blue plus', (await glyphOf('Fitness')) === 'plus')
+    check('All chip appears', await allChip())
+    check('solo label events visible', await gymVisible())
+    check('other labels events hidden', !(await walkVisible()))
+    check('no red crosses anywhere', !(await anyCross()))
+
+    // afterwards: multi-select — add another dimmed label, then toggle it off
+    await js(`(${labelRowJs('Yoga')}).click()`)
     await sleep(300)
+    check('multi-select: second label added (green)', (await glyphOf('Yoga')) === 'tick')
+    check('first label stays green', (await glyphOf('Gym')) === 'tick')
+    await js(`(${labelRowJs('Yoga')}).click()`)
+    await sleep(300)
+    check('clicking a green label removes it (dimmed)', (await glyphOf('Yoga')) === '' && (await lbHidden('Yoga')))
+    check('other stays green', (await glyphOf('Gym')) === 'tick')
+
+    // parent with unselected children (blue +): click selects the whole group
+    await js(`(${labelRowJs('Fitness')}).click()`)
+    await sleep(300)
+    check(
+      'parent click when not all children selected → selects all',
+      (await glyphOf('Fitness')) === 'tick' &&
+        (await glyphOf('Gym')) === 'tick' &&
+        (await glyphOf('Yoga')) === 'tick' &&
+        (await glyphOf('Walk')) === 'tick',
+      `F=${await glyphOf('Fitness')} G=${await glyphOf('Gym')} Y=${await glyphOf('Yoga')} W=${await glyphOf('Walk')}`
+    )
+    check('no blue plus left', !(await js(`!!document.querySelector('.lb-check.plus')`)))
+    check('group events visible', (await gymVisible()) && (await walkVisible()))
+
+    // fully-selected parent click → deselects group; since everything else was
+    // already hidden, the guard snaps back to all-selected (never all-hidden)
+    await js(`(${labelRowJs('Fitness')}).click()`)
+    await sleep(300)
+    check('fully-selected parent click → guard returns to all-selected', !(await anyGlyph()) && !(await allChip()))
+    check('guard: never all-hidden, no glyphs', !(await anyGlyph()))
+    check('all events visible again', (await gymVisible()) && (await walkVisible()))
+    check('All chip disappears', !(await allChip()))
+
+    // first click on a parent from pristine = solo-select the whole group
+    await js(`(${labelRowJs('Work')}).click()`)
+    await sleep(300)
+    check(
+      'first click on parent solo-selects group',
+      (await glyphOf('Work')) === 'tick' && (await glyphOf('Project A')) === 'tick' && (await glyphOf('Meetings')) === 'tick',
+      `W=${await glyphOf('Work')} P=${await glyphOf('Project A')} M=${await glyphOf('Meetings')}`
+    )
+    check('others dimmed', (await lbHidden('Fitness')) && (await lbHidden('Personal')))
+    check('group events visible, others hidden', (await deepVisible()) && !(await walkVisible()))
+
+    // All chip resets everything → pristine
+    await js(`document.querySelector('.all-chip').click()`)
+    await sleep(300)
+    check('All chip clears all hidden', !(await lbHidden('Work')) && !(await lbHidden('Fitness')))
+    check('default restored: no glyphs', !(await anyGlyph()))
+    check('all events visible again after reset', (await gymVisible()) && (await walkVisible()))
+    check('no red crosses ever', !(await anyCross()))
 
     // delete is two-step; Undo restores the label
     await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
@@ -453,6 +530,55 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     check('cleanup: labels removed', lblNames.length === 0, JSON.stringify(lblNames))
     await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
     await sleep(150)
+
+    // 2l. M7 — insights view: cards, digest, charts, heatmap, period switch
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Insights').click()`)
+    await sleep(600)
+    const iv = await js(`({
+      view: !!document.querySelector('.insights-view'),
+      cards: document.querySelectorAll('.ins-card').length,
+      digest: document.querySelectorAll('.digest li').length,
+      charts: document.querySelectorAll('.chart-svg').length,
+      heat: document.querySelectorAll('.heatmap .heat-cell').length,
+      donut: !!document.querySelector('.donut'),
+      progress: document.querySelectorAll('.ins-progress').length
+    })`)
+    check('insights view opens', iv.view)
+    check('summary cards render (>=4)', iv.cards >= 4, String(iv.cards))
+    check('plain-language digest present (>=3)', iv.digest >= 3, String(iv.digest))
+    check('charts render (>=4)', iv.charts >= 4, String(iv.charts))
+    check('heatmap renders (112 cells)', iv.heat === 112, String(iv.heat))
+    check('donut + label progress present', iv.donut && iv.progress > 0, String(iv.progress))
+    const digText = await js(`Array.from(document.querySelectorAll('.digest li')).map((e) => e.textContent).join(' | ')`)
+    check('digest mentions planned time', /planned|completed/i.test(digText), digText.slice(0, 80))
+    await js(`Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.trim() === 'This month').click()`)
+    await sleep(500)
+    const iv2 = await js(`({ view: !!document.querySelector('.insights-view'), cards: document.querySelectorAll('.ins-card').length })`)
+    check('period switch keeps insights rendering', iv2.view && iv2.cards >= 4)
+    await js(`Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.trim() === 'All time').click()`)
+    await sleep(500)
+    const iv3 = await js(`!!document.querySelector('.insights-view') && document.querySelectorAll('.heatmap .heat-cell').length`)
+    check('all-time period renders', iv3 === 112, String(iv3))
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+
+    // 2m. status colour dots: doing = blue dot, done = NO dot
+    const doingDots = await js(`document.querySelectorAll('.eb-dot.doing').length`)
+    check('in-progress events show a blue dot', doingDots >= 1, String(doingDots))
+    // done items exist in the month view (past occurrences) — verify no dot there
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Month').click()`)
+    await sleep(400)
+    const doneBlockDot = await js(`(() => {
+      const el = Array.from(document.querySelectorAll('.eb.done')).find((e) => e.querySelector('.eb-title'))
+      return el ? el.querySelector('.eb-dot') === null : 'no done block'
+    })()`)
+    check('done blocks have NO status dot (struck+dimmed only)', doneBlockDot === true, String(doneBlockDot))
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+
+    // 2n. week table: scrollbar gutter reserved so the sticky header doesn't bleed
+    const gutter = await js(`getComputedStyle(document.querySelector('.week-body')).scrollbarGutter`)
+    check('week table reserves scrollbar gutter (no corner bleed)', gutter === 'stable', String(gutter))
 
     // 2j. bug 2 — the editor must show the SELECTED occurrence's date,
     // not the series' start date; a "This occurrence" status edit lands on that day

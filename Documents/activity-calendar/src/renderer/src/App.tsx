@@ -11,6 +11,7 @@ import MonthView from '@/views/MonthView'
 import WeekView from '@/views/WeekView'
 import DayView from '@/views/DayView'
 import AgendaView from '@/views/AgendaView'
+import InsightsView from '@/views/InsightsView'
 
 export default function App() {
   const load = useData((s) => s.load)
@@ -52,6 +53,7 @@ export default function App() {
                 {ui.view === 'week' && <WeekView days={weekDays} />}
                 {ui.view === 'day' && <DayView />}
                 {ui.view === 'agenda' && <AgendaView />}
+                {ui.view === 'insights' && <InsightsView />}
               </div>
             )}
           </div>

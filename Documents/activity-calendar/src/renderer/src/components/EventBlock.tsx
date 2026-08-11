@@ -47,10 +47,16 @@ export default function EventBlock({ occ, box, compact, onClick, onDragStart, on
       onPointerDown={onDragStart}
       title={`${ev.title} · ${status}`}
     >
-      {status === 'done' && <span className="eb-check">✓</span>}
-      {status === 'doing' && <span className="eb-dot" style={{ background: text }} />}
-      {status === 'cancelled' && <s className="eb-title">{ev.title}</s>}
-      {status !== 'cancelled' && <span className="eb-title">{ev.title}</span>}
+      <div className="eb-title-row">
+        {/* status colour dots: todo=grey, doing=blue, cancelled=red.
+            done has NO dot — it's already struck through and dimmed. */}
+        {status !== 'done' && <span className={`eb-dot ${status}`} />}
+        {status === 'cancelled' ? (
+          <s className="eb-title">{ev.title}</s>
+        ) : (
+          <span className="eb-title">{ev.title}</span>
+        )}
+      </div>
       {!compact && (
         <span className="eb-time">
           {fmtHM(occ.start)}–{fmtHM(occ.end)}

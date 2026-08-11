@@ -103,7 +103,7 @@ export const useData = create<DataState>((set, get) => ({
 
 // ---------------- ui store ----------------
 
-export type View = 'day' | 'week' | 'month' | 'agenda'
+export type View = 'day' | 'week' | 'month' | 'agenda' | 'insights'
 
 export interface QuickAddState {
   open: boolean
@@ -125,6 +125,7 @@ interface UiState {
   goToday: () => void
   setStatusFilter: (s: EventStatus | 'all') => void
   toggleLabelHidden: (id: string) => void
+  setHiddenLabels: (ids: string[]) => void
   setSearch: (s: string) => void
   openQuickAdd: (date?: string, time?: string) => void
   closeQuickAdd: () => void
@@ -139,7 +140,7 @@ export const hm = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`
 
 const initialView = (): View => {
   const v = new URLSearchParams(location.search).get('view')
-  return v === 'day' || v === 'week' || v === 'month' || v === 'agenda' ? v : 'month'
+  return v === 'day' || v === 'week' || v === 'month' || v === 'agenda' || v === 'insights' ? v : 'month'
 }
 
 export const useUi = create<UiState>((set, get) => ({
@@ -150,7 +151,6 @@ export const useUi = create<UiState>((set, get) => ({
   search: '',
   quickAdd: null,
   editorKey: null,
-
   setView: (v) => set({ view: v }),
   setCursor: (d) => set({ cursor: d }),
   navigate: (days) => {
@@ -166,6 +166,7 @@ export const useUi = create<UiState>((set, get) => ({
     else next.add(id)
     set({ hiddenLabels: next })
   },
+  setHiddenLabels: (ids) => set({ hiddenLabels: new Set(ids) }),
   setSearch: (s) => set({ search: s }),
   openQuickAdd: (date, time) => {
     const d = date ? new Date(date + 'T00:00:00') : new Date()
@@ -177,7 +178,7 @@ export const useUi = create<UiState>((set, get) => ({
   closeEditor: () => set({ editorKey: null })
 }))
 
-/** Labels that are hidden (filtered out) — parent hides its children too. */
+/** Labels that are hidden (filtered out) — hiding a parent hides its children too. */
 export function hiddenLabelIds(labels: Label[], hidden: Set<string>): Set<string> {
   const out = new Set<string>()
   for (const l of labels) {

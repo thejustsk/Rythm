@@ -15,10 +15,7 @@ export default function AgendaView() {
     const rangeEnd = addDays(today, 45)
     const occs = computeOccurrences(events, rangeStart, rangeEnd)
 
-    const hidden = new Set<string>()
-    for (const l of labels) {
-      if (ui.hiddenLabels.has(l.id) || (l.parentId && ui.hiddenLabels.has(l.parentId))) hidden.add(l.id)
-    }
+    const hidden = ui.hiddenLabels
 
     const filtered = occs.filter((o) => {
       if (hidden.has(o.event.labelId ?? '')) return false

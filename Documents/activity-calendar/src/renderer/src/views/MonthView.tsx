@@ -21,10 +21,7 @@ export default function MonthView() {
   }, [events, ui.cursor])
 
   const filtered = useMemo(() => {
-    const hidden = new Set<string>()
-    for (const l of labels) {
-      if (ui.hiddenLabels.has(l.id) || (l.parentId && ui.hiddenLabels.has(l.parentId))) hidden.add(l.id)
-    }
+    const hidden = ui.hiddenLabels
     return occs.filter((o) => {
       if (hidden.has(o.event.labelId ?? '')) return false
       if (ui.statusFilter !== 'all' && o.event.status !== ui.statusFilter) return false
