@@ -3,6 +3,7 @@ import { useData, useUi, iso } from '@/state/store'
 import { computeOccurrences, fmtHM } from '@/engine/occurrences'
 import { addDays, startOfDay } from '@/engine/recurrence'
 import { resolveEventColor } from '@/lib/colors'
+import { daysBetween } from '@/lib/timegrid'
 
 /** Agenda: grouped list — Overdue / Today / Tomorrow / This week / Later. */
 export default function AgendaView() {
@@ -27,8 +28,10 @@ export default function AgendaView() {
     const g = (name: string, dayOffsetFrom: number, dayOffsetTo: number) => {
       const from = addDays(today, dayOffsetFrom)
       const to = addDays(today, dayOffsetTo + 1)
+      // INCLUDE an event whenever ANY part (full or partial) falls inside the
+      // group's days — multi-day events appear in every day they touch
       return filtered
-        .filter((o) => o.start.getTime() >= from.getTime() && o.start.getTime() < to.getTime())
+        .filter((o) => o.start.getTime() < to.getTime() && o.end.getTime() > from.getTime())
         .sort((a, b) => a.start.getTime() - b.start.getTime())
     }
 
@@ -53,8 +56,13 @@ export default function AgendaView() {
           <div className="agenda-title">{grp.name}</div>
           {grp.items.map((o) => {
             const color = resolveEventColor(o.event, labels)
+            const durDays = (o.end.getTime() - o.start.getTime()) / 86400000
+            // multi-day = spans more than one CALENDAR day (e.g. 22:00→00:30)
+            const multiday = daysBetween(o.start, o.end) >= 1
+            const dateStr = o.start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
             return (
               <button key={o.key} className="agenda-row" onClick={() => ui.openEditor(o.eventId, o.originDate)}>
+                <span className="agenda-date">{dateStr}</span>
                 <span className="agenda-time">
                   {fmtHM(o.start)}
                   <span className="muted">–{fmtHM(o.end)}</span>
@@ -66,9 +74,8 @@ export default function AgendaView() {
                 {o.event.status === 'doing' && <span className="mini-badge doing">in progress</span>}
                 {o.event.status === 'done' && <span className="mini-badge done">✓ done</span>}
                 {o.event.status === 'cancelled' && <span className="mini-badge cancelled">✕ cancelled</span>}
-                {iso(o.start) !== iso(o.end) && (
-                  <span className="muted agenda-days">+{(o.end.getTime() - o.start.getTime()) / 86400000}d</span>
-                )}
+                {multiday && <span className="mini-badge multiday">multi-day</span>}
+                {multiday && <span className="muted agenda-days">+{durDays.toFixed(2)}d</span>}
               </button>
             )
           })}

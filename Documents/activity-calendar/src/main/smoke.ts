@@ -1218,6 +1218,58 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
     await sleep(150)
 
+    // 2ak. premium Insights heading (shining blue border)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Insights').click()`)
+    await sleep(700)
+    const prem = await js(`(() => {
+      const el = document.querySelector('.premium-heading')
+      if (!el) return null
+      const cs = getComputedStyle(el)
+      return { text: el.textContent.trim(), border: cs.borderColor, anim: cs.animationName, radius: cs.borderRadius }
+    })()`)
+    check('premium heading present in toolbar', !!prem && prem.text.includes('Insights'), JSON.stringify(prem))
+    check('premium heading has blue border + shine animation', !!prem && prem.border === 'rgb(10, 132, 255)' && prem.anim.includes('premiumShine'), JSON.stringify(prem))
+
+    // 2al. agenda: date column, multiday label, 2-decimal days, present on both days
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Agenda').click()`)
+    await sleep(700)
+    const agDates = await js(`document.querySelectorAll('.agenda-date').length`)
+    check('agenda rows show the event date', agDates > 0, String(agDates))
+    // create a multi-day event spanning today→tomorrow
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    await js(`document.querySelector('.new-btn').click()`)
+    await sleep(250)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke multiag')`)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T22:00')`)
+    await sleep(100)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TOMORROW}T00:30')`)
+    await sleep(100)
+    await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
+    await sleep(500)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Agenda').click()`)
+    await sleep(700)
+    const multiRows = await js(`Array.from(document.querySelectorAll('.agenda-row')).filter((r) => r.textContent.includes('Smoke multiag')).length`)
+    check('multiday event appears in EVERY day it touches (2 groups)', multiRows === 2, String(multiRows))
+    const multiBadge = await js(`(() => { const r = Array.from(document.querySelectorAll('.agenda-row')).find((x) => x.textContent.includes('Smoke multiag')); return r ? !!r.querySelector('.mini-badge.multiday') : false })()`)
+    check('multiday label shown', multiBadge)
+    const multiDays = await js(`(() => { const r = Array.from(document.querySelectorAll('.agenda-row')).find((x) => x.textContent.includes('Smoke multiag')); const d = r?.querySelector('.agenda-days'); return d ? d.textContent : '' })()`)
+    check('extra-day indicator truncated to 2 decimals', /^\+\d+\.\d\dd$/.test(multiDays), multiDays)
+    const agDateVal = await js(`(() => { const r = Array.from(document.querySelectorAll('.agenda-row')).find((x) => x.textContent.includes('Smoke multiag')); const d = r?.querySelector('.agenda-date'); return d ? d.textContent : '' })()`)
+    check('agenda date shows month+day', /^[A-Z][a-z]{2} \d{1,2}$/.test(agDateVal), agDateVal)
+    // heading bleed: sticky title has z-index + solid bg
+    const agTitle = await js(`(() => { const t = document.querySelector('.agenda-title'); if (!t) return null; const cs = getComputedStyle(t); return { z: cs.zIndex, bg: cs.backgroundColor, pos: cs.position } })()`)
+    check('agenda heading has solid bg + z-index (no bleed)', !!agTitle && agTitle.pos === 'sticky' && agTitle.z !== 'auto', JSON.stringify(agTitle))
+    // cleanup
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke multiag')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`document.querySelector('.editor .btn.danger').click()`)
+    await sleep(500)
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(150)
+
     // 2j. bug 2 — the editor must show the SELECTED occurrence's date,
     // not the series' start date; a "This occurrence" status edit lands on that day
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)

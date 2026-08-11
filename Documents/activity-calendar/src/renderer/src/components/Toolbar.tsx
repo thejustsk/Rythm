@@ -12,9 +12,14 @@ export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
   const ui = useUi()
 
   if (minimal) {
-    // Insights view: only the view switcher stays
+    // Insights view: premium heading (shining blue) + only the view switcher
     return (
       <div className="toolbar minimal">
+        <div className="tb-left">
+          <span className="premium-heading" title="Premium feature">
+            <span className="ph-icon">✦</span> Insights
+          </span>
+        </div>
         <div className="tb-right">
           <div className="segmented">
             {VIEWS.map((v) => (
