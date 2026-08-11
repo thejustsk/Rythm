@@ -36,6 +36,8 @@ export interface Label {
 }
 
 export interface EventInput {
+  /** optional explicit id (used by undo-restore) */
+  id?: string
   title: string
   description?: string
   startLocal: string

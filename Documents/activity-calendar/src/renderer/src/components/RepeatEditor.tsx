@@ -72,6 +72,12 @@ export default function RepeatEditor({ value, onChange, startDate }: Props) {
     return nextOccurrences(value, start, 6)
   }, [value, start])
 
+  // yearly previews must show the year (issue 2)
+  const chipText = (d: Date) =>
+    freq === 'YEARLY'
+      ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+
   const summary = useMemo(() => (value ? ruleToHuman(value) : null), [value])
 
   // Warning: the event's own start day isn't in the weekly rule → the first
@@ -218,7 +224,7 @@ export default function RepeatEditor({ value, onChange, startDate }: Props) {
             <div className="re-preview">
               {preview.map((d, i) => (
                 <span key={i} className="re-preview-date">
-                  {d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  {chipText(d)}
                 </span>
               ))}
               <span className="re-preview-more">…</span>

@@ -1,14 +1,25 @@
 import { useMemo, useState } from 'react'
 import { useData, useUi } from '@/state/store'
+import { useToasts } from '@/state/toasts'
 import type { EventStatus } from '@shared/types'
-import { ruleToHuman } from '@/engine/recurrence'
+import { ruleToHuman, rruleUntil } from '@/engine/recurrence'
 import { EventFormFields } from './EventForm'
 import RepeatEditor from './RepeatEditor'
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+/** The day before an ISO date — used by "delete upcoming". */
+export function dayBefore(iso: string): string {
+  const d = new Date(iso + 'T00:00:00')
+  d.setDate(d.getDate() - 1)
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
 
 /** Full editor for one occurrence / event. */
 export default function EventDialog() {
   const ui = useUi()
-  const { events, updateEvent, removeEvent, applyOverride } = useData()
+  const { events, updateEvent, removeEvent, applyOverride, restoreEvent } = useData()
+  const toasts = useToasts.getState()
 
   const occ = useMemo(() => {
     const [eventId, originDate] = ui.editorKey!.split('|')
@@ -17,33 +28,54 @@ export default function EventDialog() {
 
   const event = events.find((e) => e.id === occ.eventId) ?? null
 
+  // The form must show the SELECTED occurrence's date, not the series' start
+  // date: a regular occurrence lives on occ.originDate; only its time comes
+  // from the master event.
+  const timeOf = (s: string) => (s ? s.slice(11) : '00:00')
+  const pad2 = (n: number) => String(n).padStart(2, '0')
+  const formStartLocal = event ? `${occ.originDate}T${timeOf(event.startLocal)}` : ''
+  const formEndLocal = event
+    ? (() => {
+        const et = timeOf(event.endLocal)
+        const st = timeOf(event.startLocal)
+        // end time at/before start time → crossed midnight, end lands next day
+        if (et <= st) {
+          const d = new Date(occ.originDate + 'T00:00:00')
+          d.setDate(d.getDate() + 1)
+          return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${et}`
+        }
+        return `${occ.originDate}T${et}`
+      })()
+    : ''
+
   const [title, setTitle] = useState(event?.title ?? '')
-  const [start, setStart] = useState(event?.startLocal ?? '')
-  const [end, setEnd] = useState(event?.endLocal ?? '')
+  const [start, setStart] = useState(formStartLocal)
+  const [end, setEnd] = useState(formEndLocal)
   const [labelId, setLabelId] = useState<string | null>(event?.labelId ?? null)
   const [status, setStatus] = useState<EventStatus>(event?.status ?? 'todo')
   const [description, setDescription] = useState(event?.description ?? '')
   const [rrule, setRrule] = useState<string | null>(event?.rrule ?? null)
-  const [applyTo, setApplyTo] = useState<'this' | 'series'>('series')
+  const [applyTo, setApplyTo] = useState<'this' | 'series'>('this')
 
-  // reset state whenever a different event is opened
+  // reset state whenever a different event OR occurrence is opened
   const [loadedKey, setLoadedKey] = useState<string | null>(null)
-  if (event && loadedKey !== event.id) {
-    setLoadedKey(event.id)
+  if (event && loadedKey !== `${event.id}|${occ.originDate}`) {
+    setLoadedKey(`${event.id}|${occ.originDate}`)
     setTitle(event.title)
-    setStart(event.startLocal)
-    setEnd(event.endLocal)
+    setStart(formStartLocal)
+    setEnd(formEndLocal)
     setLabelId(event.labelId)
     setStatus(event.status)
     setDescription(event.description)
     setRrule(event.rrule)
-    setApplyTo('series')
+    setApplyTo('this')
   }
 
   if (!event) return null
   const recurring = !!event.rrule
   const isOverride = !!event.parentId
   const canEditOccurrence = recurring && !isOverride
+  const seriesMode = canEditOccurrence && applyTo === 'series'
 
   const save = async () => {
     if (!title.trim()) return
@@ -73,26 +105,110 @@ export default function EventDialog() {
     } else {
       await updateEvent(event.id, { ...fields, rrule })
     }
+    toasts.push({ message: `Saved "${title.trim()}"`, kind: 'info', duration: 2500 })
     ui.closeEditor()
   }
 
-  const del = async (mode: 'this' | 'series' | null) => {
-    if (canEditOccurrence) {
-      if (mode === 'this') {
-        const exdates = [...event.exdates, occ.originDate]
-        await updateEvent(event.id, { exdates })
-      } else {
-        await removeEvent(event.id)
+  /** Skip just this occurrence (series keeps going). */
+  const delThis = async () => {
+    const prevExdates = [...event.exdates]
+    await updateEvent(event.id, { exdates: [...prevExdates, occ.originDate] })
+    toasts.push({
+      message: `Deleted "${event.title}"`,
+      kind: 'danger',
+      actionLabel: 'Undo',
+      onAction: () => {
+        void updateEvent(event.id, { exdates: prevExdates })
+        toasts.push({ message: `Restored "${event.title}"`, kind: 'info' })
       }
-    } else {
-      await removeEvent(event.id)
-    }
+    })
+    ui.closeEditor()
+  }
+
+  /** Delete a one-off override. */
+  const delOverride = async () => {
+    const copy = event
+    await removeEvent(event.id)
+    toasts.push({
+      message: `Deleted "${copy.title}"`,
+      kind: 'danger',
+      actionLabel: 'Undo',
+      onAction: () => {
+        void restoreEvent(copy)
+        toasts.push({ message: `Restored "${copy.title}"`, kind: 'info' })
+      }
+    })
+    ui.closeEditor()
+  }
+
+  /** Delete the whole series (master + every override). */
+  const delSeries = async () => {
+    const master = event
+    const children = events.filter((e) => e.parentId === master.id)
+    await removeEvent(master.id)
+    toasts.push({
+      message: `Deleted series "${master.title}"`,
+      kind: 'danger',
+      actionLabel: 'Undo',
+      onAction: () => {
+        void (async () => {
+          await restoreEvent(master)
+          for (const c of children) await restoreEvent(c)
+        })()
+        toasts.push({ message: `Restored series "${master.title}"`, kind: 'info' })
+      }
+    })
+    ui.closeEditor()
+  }
+
+  /** Delete this occurrence and everything after it; keep the past. */
+  const delUpcoming = async () => {
+    const master = event
+    const prevRrule = master.rrule!
+    const until = dayBefore(occ.originDate)
+    const children = events.filter(
+      (e) => e.parentId === master.id && e.originDate && e.originDate >= occ.originDate
+    )
+    await updateEvent(master.id, { rrule: rruleUntil(prevRrule, until) })
+    for (const c of children) await removeEvent(c.id)
+    toasts.push({
+      message: `Deleted "${master.title}" and upcoming`,
+      kind: 'danger',
+      actionLabel: 'Undo',
+      onAction: () => {
+        void (async () => {
+          await updateEvent(master.id, { rrule: prevRrule })
+          for (const c of children) await restoreEvent(c)
+        })()
+        toasts.push({ message: `Restored "${master.title}"`, kind: 'info' })
+      }
+    })
     ui.closeEditor()
   }
 
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && ui.closeEditor()}>
       <div className="dialog editor">
+        {canEditOccurrence && (
+          <div className="apply-to top">
+            <span className="re-label">Apply changes to</span>
+            <div className="segmented accent">
+              <button
+                className={`seg-btn${applyTo === 'this' ? ' active' : ''}`}
+                onClick={() => setApplyTo('this')}
+              >
+                This occurrence
+              </button>
+              <button
+                className={`seg-btn${applyTo === 'series' ? ' active' : ''}`}
+                onClick={() => setApplyTo('series')}
+              >
+                Whole series
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="dialog-title">
           Edit activity
           {isOverride && <span className="badge">one-time change</span>}
@@ -114,26 +230,6 @@ export default function EventDialog() {
           setDescription={setDescription}
         />
 
-        {canEditOccurrence && (
-          <div className="apply-to">
-            <span className="re-label">Apply changes to</span>
-            <div className="segmented accent">
-              <button
-                className={`seg-btn${applyTo === 'series' ? ' active' : ''}`}
-                onClick={() => setApplyTo('series')}
-              >
-                Whole series
-              </button>
-              <button
-                className={`seg-btn${applyTo === 'this' ? ' active' : ''}`}
-                onClick={() => setApplyTo('this')}
-              >
-                This occurrence
-              </button>
-            </div>
-          </div>
-        )}
-
         {!isOverride &&
           (canEditOccurrence && applyTo === 'this' ? (
             <div className="repeat-note muted">
@@ -150,16 +246,22 @@ export default function EventDialog() {
         <div className="dialog-actions between">
           <div className="del-actions">
             {canEditOccurrence ? (
-              <>
-                <button className="btn danger" onClick={() => void del('this')}>
+              applyTo === 'this' ? (
+                <button className="btn danger" onClick={() => void delThis()}>
                   Delete this occurrence
                 </button>
-                <button className="btn danger" onClick={() => void del('series')}>
-                  Delete series
-                </button>
-              </>
+              ) : (
+                <>
+                  <button className="btn danger" onClick={() => void delUpcoming()}>
+                    Delete upcoming
+                  </button>
+                  <button className="btn danger" onClick={() => void delSeries()}>
+                    Delete series
+                  </button>
+                </>
+              )
             ) : (
-              <button className="btn danger" onClick={() => void del(null)}>
+              <button className="btn danger" onClick={() => void delOverride()}>
                 Delete
               </button>
             )}

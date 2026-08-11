@@ -231,6 +231,19 @@ export function nextOccurrences(rrule: string, from: Date, n: number): Date[] {
   return out
 }
 
+/** Replace any ending of a rule with UNTIL=<date> (used by "delete upcoming"). */
+export function rruleUntil(rrule: string, untilIso: string): string {
+  const rule = parseRRule(rrule)
+  if (!rule) return rrule
+  const parts = [`FREQ=${rule.freq}`]
+  if (rule.interval > 1) parts.push(`INTERVAL=${rule.interval}`)
+  if (rule.byday?.length) parts.push(`BYDAY=${rule.byday.join(',')}`)
+  if (rule.bymonth?.length) parts.push(`BYMONTH=${rule.bymonth.join(',')}`)
+  if (rule.bymonthday?.length) parts.push(`BYMONTHDAY=${rule.bymonthday.join(',')}`)
+  parts.push(`UNTIL=${untilIso}`)
+  return parts.join(';')
+}
+
 /** Human-readable summary of a rule, e.g. "Every week on Mon, Wed, Fri". */
 export function ruleToHuman(rrule: string): string {
   const rule = parseRRule(rrule)

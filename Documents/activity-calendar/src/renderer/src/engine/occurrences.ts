@@ -49,11 +49,11 @@ export function computeOccurrences(
 
   const out: Occurrence[] = []
   const pushOcc = (ev: CalendarEvent, start: Date, end: Date, isOverride: boolean) => {
-    // Stable key: an override uses the master's id so React reuses the same DOM
-    // node when a recurring occurrence is edited/dragged (no blink).
-    const base = isOverride && ev.parentId ? ev.parentId : ev.id
+    // Key = actual event row id + date → ALWAYS unique, even when an override
+    // lands on a day that already has a regular occurrence of the same series
+    // (a parentId-based key would collide → React kept a stale node = ghost).
     out.push({
-      key: `${base}|${isoDate(start)}`,
+      key: `${ev.id}|${isoDate(start)}`,
       eventId: ev.id,
       originDate: isoDate(start),
       start,

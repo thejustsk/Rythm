@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useData, useUi } from '@/state/store'
+import { useToasts } from '@/state/toasts'
 import type { EventStatus } from '@shared/types'
 import { EventFormFields } from './EventForm'
 import RepeatEditor from './RepeatEditor'
@@ -8,6 +9,7 @@ import RepeatEditor from './RepeatEditor'
 export default function QuickAdd() {
   const ui = useUi()
   const createEvent = useData((s) => s.createEvent)
+  const toasts = useToasts.getState()
   const [title, setTitle] = useState('')
   const [start, setStart] = useState(`${ui.quickAdd!.date}T${ui.quickAdd!.time}`)
   const [end, setEnd] = useState(() => {
@@ -30,6 +32,7 @@ export default function QuickAdd() {
       status,
       rrule
     })
+    toasts.push({ message: `Added "${title.trim()}"`, kind: 'info', duration: 2500 })
     ui.closeQuickAdd()
   }
 

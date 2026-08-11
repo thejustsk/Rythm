@@ -64,3 +64,29 @@ export function layoutColumns<T>(items: Array<LayoutItem<T>>): Map<T, { col: num
   }
   return result
 }
+
+/**
+ * Split side-by-side only within connected clusters of overlapping items.
+ * Non-overlapping items keep full width — the split never applies to the
+ * whole day (issue: card-size split applied to all events of the day).
+ */
+export function layoutClusters<T>(items: Array<LayoutItem<T>>): Map<T, { col: number; cols: number }> {
+  const sorted = [...items].sort((a, b) => a.startMin - b.startMin || b.endMin - a.endMin)
+  const result = new Map<T, { col: number; cols: number }>()
+  let cluster: Array<LayoutItem<T>> = []
+  let clusterEnd = -Infinity
+  const flush = () => {
+    if (cluster.length === 0) return
+    const m = layoutColumns(cluster)
+    for (const [it, v] of m) result.set(it, v)
+    cluster = []
+  }
+  for (const it of sorted) {
+    // a new cluster starts when this item begins after everything in the current one ended
+    if (cluster.length > 0 && it.startMin >= clusterEnd) flush()
+    cluster.push(it)
+    clusterEnd = Math.max(clusterEnd, it.endMin)
+  }
+  flush()
+  return result
+}

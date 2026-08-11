@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseRRule, iterateRule, ruleToHuman, isoDate, addDays, buildRRule, nextOccurrences } from '../src/renderer/src/engine/recurrence'
+import { parseRRule, iterateRule, ruleToHuman, isoDate, addDays, buildRRule, nextOccurrences, rruleUntil } from '../src/renderer/src/engine/recurrence'
 
 const d = (y: number, m: number, day: number, hh = 9, mm = 0) => new Date(y, m - 1, day, hh, mm)
 const dates = (gen: Generator<Date>) => Array.from(gen).map(isoDate)
@@ -140,6 +140,28 @@ describe('nextOccurrences', () => {
   })
   it('returns [] for an invalid rule', () => {
     expect(nextOccurrences('garbage', d(2026, 8, 10), 3)).toEqual([])
+  })
+})
+
+describe('rruleUntil (delete upcoming)', () => {
+  it('replaces COUNT with UNTIL', () => {
+    expect(rruleUntil('FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=3', '2026-08-10')).toBe(
+      'FREQ=WEEKLY;BYDAY=MO,WE,FR;UNTIL=2026-08-10'
+    )
+  })
+  it('keeps INTERVAL', () => {
+    expect(rruleUntil('FREQ=DAILY;INTERVAL=2', '2026-08-10')).toBe('FREQ=DAILY;INTERVAL=2;UNTIL=2026-08-10')
+  })
+  it('keeps monthly parts in canonical order', () => {
+    expect(rruleUntil('FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=14', '2026-08-10')).toBe(
+      'FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=14;UNTIL=2026-08-10'
+    )
+  })
+  it('the resulting rule stops before the UNTIL date (inclusive semantics)', () => {
+    const r = rruleUntil('FREQ=DAILY', '2026-08-10')
+    const rule = parseRRule(r)!
+    const out = Array.from(iterateRule(rule, d(2026, 8, 8))).map(isoDate)
+    expect(out).toEqual(['2026-08-08', '2026-08-09', '2026-08-10'])
   })
 })
 

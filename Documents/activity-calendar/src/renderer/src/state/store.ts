@@ -11,9 +11,13 @@ interface DataState {
   createEvent: (input: EventInput) => Promise<void>
   updateEvent: (id: string, patch: Partial<EventInput>) => Promise<void>
   removeEvent: (id: string) => Promise<void>
+  /** Re-create a previously deleted event with its original id (undo). */
+  restoreEvent: (ev: CalendarEvent) => Promise<void>
   /** Create a one-off override copy of a recurring event + skip that day in the series — atomically. */
   applyOverride: (override: EventInput, masterId: string, exdates: string[]) => Promise<void>
-  createLabel: (name: string, color: string | null, parentId: string | null) => Promise<void>
+  createLabel: (name: string, color: string | null, parentId: string | null) => Promise<Label>
+  updateLabel: (id: string, patch: { name?: string; color?: string | null; sortOrder?: number; archived?: boolean }) => Promise<void>
+  removeLabel: (id: string) => Promise<void>
 }
 
 export const useData = create<DataState>((set, get) => ({
@@ -41,6 +45,25 @@ export const useData = create<DataState>((set, get) => ({
     set({ events: get().events.filter((e) => e.id !== id && e.parentId !== id) })
   },
 
+  restoreEvent: async (ev) => {
+    const created = await window.api.events.create({
+      id: ev.id,
+      title: ev.title,
+      description: ev.description,
+      startLocal: ev.startLocal,
+      endLocal: ev.endLocal,
+      allDay: ev.allDay,
+      labelId: ev.labelId,
+      colorOverride: ev.colorOverride,
+      status: ev.status,
+      rrule: ev.rrule,
+      exdates: ev.exdates,
+      parentId: ev.parentId,
+      originDate: ev.originDate
+    })
+    set({ events: [...get().events, created] })
+  },
+
   applyOverride: async (override, masterId, exdates) => {
     const created = await window.api.events.create(override)
     const updated = await window.api.events.update(masterId, { exdates })
@@ -52,6 +75,29 @@ export const useData = create<DataState>((set, get) => ({
   createLabel: async (name, color, parentId) => {
     const label = await window.api.labels.create(name, color, parentId)
     set({ labels: [...get().labels, label] })
+    return label
+  },
+
+  updateLabel: async (id, patch) => {
+    const label = await window.api.labels.update(id, patch)
+    set({ labels: get().labels.map((l) => (l.id === id ? label : l)) })
+  },
+
+  removeLabel: async (id) => {
+    await window.api.labels.remove(id)
+    // drop the label and any children (DB cascades; mirror it locally)
+    const ids = new Set([id])
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const l of get().labels) {
+        if (!ids.has(l.id) && l.parentId && ids.has(l.parentId)) {
+          ids.add(l.id)
+          grew = true
+        }
+      }
+    }
+    set({ labels: get().labels.filter((l) => !ids.has(l.id)) })
   }
 }))
 

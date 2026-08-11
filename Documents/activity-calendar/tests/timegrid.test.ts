@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { snap15, blockBox, layoutColumns, toMinutes, minutesToHM } from '../src/renderer/src/lib/timegrid'
+import { snap15, blockBox, layoutColumns, layoutClusters, toMinutes, minutesToHM } from '../src/renderer/src/lib/timegrid'
 
 describe('snap15', () => {
   it('rounds to the nearest 15', () => {
@@ -69,6 +69,65 @@ describe('layoutColumns', () => {
     const m = layoutColumns(items)
     expect(m.get('c')!.col).toBe(0)
     expect(m.get('c')!.cols).toBe(2)
+  })
+})
+
+describe('layoutClusters (split only overlapping)', () => {
+  it('non-overlapping items each keep full width', () => {
+    const items = [
+      { item: 'a', startMin: 0, endMin: 60 },
+      { item: 'b', startMin: 70, endMin: 130 },
+      { item: 'c', startMin: 140, endMin: 200 }
+    ]
+    const m = layoutClusters(items)
+    expect(m.get('a')).toEqual({ col: 0, cols: 1 })
+    expect(m.get('b')).toEqual({ col: 0, cols: 1 })
+    expect(m.get('c')).toEqual({ col: 0, cols: 1 })
+  })
+
+  it('only the overlapping pair splits; the standalone stays full width', () => {
+    const items = [
+      { item: 'a', startMin: 0, endMin: 60 },
+      { item: 'b', startMin: 30, endMin: 90 },
+      { item: 'c', startMin: 120, endMin: 180 }
+    ]
+    const m = layoutClusters(items)
+    expect(m.get('a')!.cols).toBe(2)
+    expect(m.get('b')!.cols).toBe(2)
+    expect(m.get('a')!.col).not.toBe(m.get('b')!.col)
+    expect(m.get('c')).toEqual({ col: 0, cols: 1 }) // untouched by the split
+  })
+
+  it('a chain of overlaps forms one cluster with three columns', () => {
+    const items = [
+      { item: 'a', startMin: 0, endMin: 60 },
+      { item: 'b', startMin: 30, endMin: 90 },
+      { item: 'c', startMin: 60, endMin: 120 }
+    ]
+    const m = layoutClusters(items)
+    expect(m.get('a')!.cols).toBe(2)
+    expect(m.get('b')!.cols).toBe(2)
+    expect(m.get('c')!.cols).toBe(2)
+    // c reuses column 0 after a ends
+    expect(m.get('c')!.col).toBe(0)
+    expect(m.get('b')!.col).not.toBe(m.get('a')!.col)
+  })
+
+  it('two separate clusters split independently', () => {
+    const items = [
+      { item: 'a', startMin: 0, endMin: 60 },
+      { item: 'b', startMin: 30, endMin: 90 },
+      { item: 'c', startMin: 200, endMin: 260 },
+      { item: 'd', startMin: 230, endMin: 290 }
+    ]
+    const m = layoutClusters(items)
+    expect(m.get('a')!.cols).toBe(2)
+    expect(m.get('c')!.cols).toBe(2)
+    expect(m.get('d')!.col).not.toBe(m.get('c')!.col)
+  })
+
+  it('empty input → empty result', () => {
+    expect(layoutClusters([]).size).toBe(0)
   })
 })
 

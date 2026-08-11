@@ -89,6 +89,17 @@ describe('CRUD', () => {
     db.prepare("DELETE FROM labels WHERE id = 'lbl-parent-test'").run()
     expect(db.prepare("SELECT * FROM labels WHERE id = 'lbl-child-test'").get()).toBeUndefined()
   })
+
+  it('renames and recolours a label', () => {
+    db.prepare(
+      `INSERT INTO labels (id, name, color, parent_id, sort_order) VALUES ('lbl-upd-test', 'Old', '#123456', NULL, 97)`
+    ).run()
+    db.prepare("UPDATE labels SET name = 'New', color = '#ABCDEF' WHERE id = 'lbl-upd-test'").run()
+    const l = rowToLabel(db.prepare("SELECT * FROM labels WHERE id = 'lbl-upd-test'").get() as any)
+    expect(l.name).toBe('New')
+    expect(l.color).toBe('#ABCDEF')
+    db.prepare("DELETE FROM labels WHERE id = 'lbl-upd-test'").run()
+  })
 })
 
 describe('occurrence expansion against DB data', () => {

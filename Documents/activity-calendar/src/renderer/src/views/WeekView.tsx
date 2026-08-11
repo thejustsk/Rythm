@@ -1,9 +1,10 @@
 import { useMemo, useRef, useState } from 'react'
 import { useData, useUi, iso } from '@/state/store'
+import { useToasts } from '@/state/toasts'
 import { computeOccurrences, occurrencesForDay } from '@/engine/occurrences'
 import type { Occurrence } from '@/engine/occurrences'
 import { startOfDay, addDays } from '@/engine/recurrence'
-import { blockBox, layoutColumns, snap15, toMinutes, minutesToHM, DAY_MINUTES, PX_PER_MIN } from '@/lib/timegrid'
+import { blockBox, layoutClusters, snap15, toMinutes, minutesToHM, DAY_MINUTES, PX_PER_MIN } from '@/lib/timegrid'
 import EventBlock from '@/components/EventBlock'
 
 interface DragState {
@@ -74,6 +75,7 @@ export default function WeekView({ days }: Props) {
     const startLocal = `${iso(day)}T${minutesToHM(d.curStartMin)}`
     const endLocal = `${iso(day)}T${minutesToHM(d.curEndMin)}`
     const data = useData.getState()
+    const toasts = useToasts.getState()
     if (ev.rrule && !d.occ.isOverride) {
       await data.applyOverride(
         {
@@ -93,8 +95,10 @@ export default function WeekView({ days }: Props) {
         ev.id,
         [...(ev.exdates ?? []), d.occ.originDate]
       )
+      toasts.push({ message: `Moved "${ev.title}" (this occurrence)`, kind: 'info', duration: 2500 })
     } else {
       await data.updateEvent(ev.id, { startLocal, endLocal })
+      toasts.push({ message: `Moved "${ev.title}" to ${minutesToHM(d.curStartMin)}`, kind: 'info', duration: 2500 })
     }
   }
 
@@ -247,8 +251,9 @@ export default function WeekView({ days }: Props) {
           {days.map((day, dayIdx) => {
             const key = iso(day)
             const dayOccs = occurrencesForDay(filtered, day)
-            // exclude the dragged occurrence from layout so neighbours don't jump
-            const layout = layoutColumns(
+            // exclude the dragged occurrence from layout so neighbours don't jump;
+            // split side-by-side only within overlapping clusters (issue 5)
+            const layout = layoutClusters(
               dayOccs
                 .filter((o) => !(drag && o.key === drag.occ.key))
                 .map((o) => ({ item: o, startMin: toMinutes(o.start), endMin: toMinutes(o.end) }))

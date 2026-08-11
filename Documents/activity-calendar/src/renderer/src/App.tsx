@@ -6,6 +6,7 @@ import Toolbar from '@/components/Toolbar'
 import StatusFilter from '@/components/StatusFilter'
 import QuickAdd from '@/components/QuickAdd'
 import EventDialog from '@/components/EventDialog'
+import ToastHost from '@/components/ToastHost'
 import MonthView from '@/views/MonthView'
 import WeekView from '@/views/WeekView'
 import DayView from '@/views/DayView'
@@ -58,6 +59,7 @@ export default function App() {
       </div>
       {ui.quickAdd?.open && <QuickAdd />}
       {ui.editorKey && <EventDialog />}
+      <ToastHost />
     </div>
   )
 }

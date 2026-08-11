@@ -35,7 +35,7 @@ export function registerEventHandlers(db: Db): void {
 
   ipcMain.handle('events:create', (_e, input: EventInput) => {
     const now = new Date().toISOString()
-    const id = crypto.randomUUID()
+    const id = input.id ?? crypto.randomUUID()
     db.prepare(`
       INSERT INTO events (id, title, description, start_local, end_local, all_day, label_id,
                           color_override, status, rrule, exdates, parent_id, origin_date,
