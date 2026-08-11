@@ -3,6 +3,7 @@ import { useData, useUi, hiddenLabelIds } from '@/state/store'
 import { useToasts } from '@/state/toasts'
 import { computeOccurrences, occurrencesForDay } from '@/engine/occurrences'
 import { startOfDay, addDays } from '@/engine/recurrence'
+import { minutesOnDay } from '@/lib/timegrid'
 import { LABEL_PALETTE, labelColor } from '@/lib/colors'
 import type { Label } from '@shared/types'
 import MiniMonth from './MiniMonth'
@@ -29,7 +30,8 @@ export default function Sidebar() {
     const day = startOfDay(new Date())
     const occs = computeOccurrences(events, day, addDays(day, 1))
     const forDay = occurrencesForDay(occs, day)
-    const hours = forDay.reduce((s, o) => s + (o.end.getTime() - o.start.getTime()) / 3600000, 0)
+    // only TODAY's part of each occurrence counts (multi-day events split)
+    const hours = forDay.reduce((s, o) => s + minutesOnDay(o.start, o.end, day) / 60, 0)
     const done = forDay.filter((o) => o.event.status === 'done').length
     return { count: forDay.length, hours, done }
   }, [events])

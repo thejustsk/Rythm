@@ -36,15 +36,19 @@ export default function App() {
     return days
   })()
 
+  const isInsights = ui.view === 'insights'
+
   return (
     <div className="app">
       <TitleBar />
-      <div className="app-body">
+      <div className={`app-body${isInsights ? ' insights' : ''}`}>
         <Sidebar />
         <div className="main">
-          <Toolbar />
+          <Toolbar minimal={isInsights} />
           <div className="view-wrap">
-            <StatusFilter />
+            <div className={`status-wrap${isInsights ? ' gone' : ''}`}>
+              <StatusFilter />
+            </div>
             {!loaded ? (
               <div className="empty-state">Loading…</div>
             ) : (

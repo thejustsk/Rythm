@@ -245,7 +245,8 @@ export function rruleUntil(rrule: string, untilIso: string): string {
 }
 
 /** Human-readable summary of a rule, e.g. "Every week on Mon, Wed, Fri". */
-export function ruleToHuman(rrule: string): string {
+export function ruleToHuman(rrule: string | null | undefined): string {
+  if (!rrule) return ''
   const rule = parseRRule(rrule)
   if (!rule) return rrule
   const every = rule.interval > 1 ? `Every ${rule.interval} ${FREQ_LABEL[rule.freq]}s` : `Every ${FREQ_LABEL[rule.freq]}`

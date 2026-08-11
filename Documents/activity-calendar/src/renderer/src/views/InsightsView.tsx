@@ -1,20 +1,33 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useData, useUi, hiddenLabelIds } from '@/state/store'
 import { computeInsights, fmtH, isoD } from '@/lib/insights'
-import { startOfDay, addDays } from '@/engine/recurrence'
+import { startOfDay, addDays, isoDate } from '@/engine/recurrence'
 import { parseLocal } from '@/engine/occurrences'
-import { isoDate } from '@/engine/recurrence'
+import type { Label } from '@shared/types'
 
-type Period = 'week' | 'month' | 'year' | 'all'
+type Period = 'week' | 'month' | 'year' | 'all' | 'custom'
 
 const PERIODS: Array<{ id: Period; label: string }> = [
   { id: 'week', label: 'This week' },
   { id: 'month', label: 'This month' },
   { id: 'year', label: 'This year' },
-  { id: 'all', label: 'All time' }
+  { id: 'all', label: 'All time' },
+  { id: 'custom', label: 'Custom' }
 ]
 
-function rangeFor(period: Period, events: { startLocal: string }[]): { start: Date; end: Date } {
+const pad2 = (n: number) => String(n).padStart(2, '0')
+const todayIso = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+const niceDate = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+
+function rangeFor(
+  period: Period,
+  events: { startLocal: string }[],
+  customFrom: string,
+  customTo: string
+): { start: Date; end: Date } {
   const today = startOfDay(new Date())
   if (period === 'week') {
     const dow = today.getDay()
@@ -27,25 +40,57 @@ function rangeFor(period: Period, events: { startLocal: string }[]): { start: Da
   if (period === 'year') {
     return { start: new Date(today.getFullYear(), 0, 1), end: new Date(today.getFullYear() + 1, 0, 1) }
   }
-  let earliest = addDays(today, -365)
+  if (period === 'custom' && customFrom && customTo) {
+    const from = new Date(customFrom + 'T00:00:00')
+    const to = new Date(customTo + 'T00:00:00')
+    if (to >= from) return { start: from, end: addDays(to, 1) }
+  }
+  // ALL TIME: every past event (completely) up to THIS YEAR's last day.
+  let earliest: Date | null = null
   for (const e of events) {
     const t = parseLocal(e.startLocal).getTime()
-    if (t < earliest.getTime()) earliest = new Date(t)
+    if (!earliest || t < earliest.getTime()) earliest = new Date(t)
   }
-  return { start: startOfDay(earliest), end: addDays(today, 1) }
+  const start = startOfDay(earliest ?? addDays(today, -30))
+  const end = new Date(today.getFullYear() + 1, 0, 1) // Jan 1 next year = Dec 31 23:59 this year
+  return { start, end }
 }
+
+const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 export default function InsightsView() {
   const { events, labels } = useData()
   const ui = useUi()
   const [period, setPeriod] = useState<Period>('week')
+  const [customFrom, setCustomFrom] = useState(todayIso)
+  const [customTo, setCustomTo] = useState(todayIso)
+  const [focusTop, setFocusTop] = useState<string | null>(null)
+  const [expandedDonut, setExpandedDonut] = useState<string | null>(null)
+  const [expandedComp, setExpandedComp] = useState<string | null>(null)
+  const [faces, setFaces] = useState<number[]>([0, 0, 0, 0])
+  const [bestStreak, setBestStreak] = useState(0)
 
   const hidden = useMemo(() => hiddenLabelIds(labels, ui.hiddenLabels), [labels, ui.hiddenLabels])
+  const parents = useMemo(() => labels.filter((l) => !l.parentId), [labels])
 
   const ins = useMemo(() => {
-    const { start, end } = rangeFor(period, events)
-    return computeInsights(events, labels, hidden, start, end)
-  }, [events, labels, hidden, period])
+    const { start, end } = rangeFor(period, events, customFrom, customTo)
+    return computeInsights(events, labels, hidden, start, end, focusTop)
+  }, [events, labels, hidden, period, customFrom, customTo, focusTop])
+
+  // persist best streak (all-time high) + load it once
+  useEffect(() => {
+    window.api.settings.get('bestStreak').then((v) => {
+      const n = parseInt(v ?? '0', 10)
+      if (!isNaN(n) && n > 0) setBestStreak(n)
+    })
+  }, [])
+  useEffect(() => {
+    if (ins.streak > bestStreak) {
+      setBestStreak(ins.streak)
+      void window.api.settings.set('bestStreak', String(ins.streak))
+    }
+  }, [ins.streak, bestStreak])
 
   const donut = useMemo(() => {
     const top = ins.perLabel.slice(0, 6)
@@ -55,7 +100,6 @@ export default function InsightsView() {
   }, [ins.perLabel])
 
   const barBuckets = useMemo(() => {
-    // week → daily bars; month → daily; year → monthly; all → weekly buckets
     const p = ins.perDay
     if (period === 'week') return p.map((d) => ({ label: new Date(d.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' }), plannedMin: d.plannedMin, doneMin: d.doneMin }))
     if (period === 'month') return p.map((d) => ({ label: new Date(d.date + 'T00:00:00').getDate().toString(), plannedMin: d.plannedMin, doneMin: d.doneMin }))
@@ -85,198 +129,339 @@ export default function InsightsView() {
     return buckets.map((b) => ({ label: new Date(b.label + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), plannedMin: b.plannedMin, doneMin: b.doneMin }))
   }, [ins.perDay, period])
 
-  const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
   const maxBar = Math.max(1, ...barBuckets.map((b) => b.plannedMin))
   const maxHour = Math.max(1, ...ins.hourDist)
   const maxWd = Math.max(1, ...ins.weekdayDist)
 
+  // ---- dice KPI faces ----
+  const totalShare = Math.max(1, ins.plannedMin + ins.cancelledMin)
+  const pctOf = (min: number) => (totalShare > 0 ? `${Math.round((min / totalShare) * 100)}%` : '—')
+  const kpiFaces: Array<Array<{ label: string; value: string; icon: string; iconBg: string; iconColor: string }>> = [
+    [
+      { label: 'Planned time', value: fmtH(ins.plannedMin), icon: '⏱', iconBg: 'rgba(10,132,255,.14)', iconColor: 'var(--accent)' },
+      { label: 'Achieved', value: fmtH(ins.doneMin), icon: '✓', iconBg: 'rgba(52,199,89,.15)', iconColor: 'var(--green)' }
+    ],
+    [
+      { label: 'Completed', value: `${ins.doneCount} / ${ins.count}`, icon: '✓', iconBg: 'rgba(52,199,89,.15)', iconColor: 'var(--green)' },
+      { label: 'To Do', value: String(ins.todoCount), icon: '◌', iconBg: 'rgba(142,142,147,.18)', iconColor: 'var(--text-2)' },
+      { label: 'In Progress', value: String(ins.doingCount), icon: '●', iconBg: 'rgba(10,132,255,.14)', iconColor: 'var(--accent)' },
+      { label: 'Cancelled', value: String(ins.cancelledCount), icon: '✕', iconBg: 'rgba(255,59,48,.13)', iconColor: 'var(--red)' }
+    ],
+    [
+      { label: 'Completion', value: `${ins.completion}%`, icon: '%', iconBg: 'rgba(255,159,10,.16)', iconColor: 'var(--amber)' },
+      { label: 'To Do share', value: pctOf(ins.todoMin), icon: '◌', iconBg: 'rgba(142,142,147,.18)', iconColor: 'var(--text-2)' },
+      { label: 'In Progress share', value: pctOf(ins.doingMin), icon: '●', iconBg: 'rgba(10,132,255,.14)', iconColor: 'var(--accent)' },
+      { label: 'Cancelled share', value: pctOf(ins.cancelledMin), icon: '✕', iconBg: 'rgba(255,59,48,.13)', iconColor: 'var(--red)' }
+    ],
+    [
+      { label: 'Current streak', value: `${ins.streak}d`, icon: '🔥', iconBg: 'rgba(255,69,58,.14)', iconColor: '#ff453a' },
+      { label: 'Streak started', value: ins.streakStart ? niceDate(ins.streakStart) : '—', icon: '📅', iconBg: 'rgba(10,132,255,.14)', iconColor: 'var(--accent)' },
+      { label: 'Best streak ever', value: `${bestStreak}d`, icon: '🏆', iconBg: 'rgba(255,159,10,.16)', iconColor: 'var(--amber)' },
+      { label: 'First completion', value: ins.firstDone ? niceDate(ins.firstDone) : '—', icon: '🌱', iconBg: 'rgba(52,199,89,.15)', iconColor: 'var(--green)' }
+    ]
+  ]
+  const statsKey = `${ins.plannedMin}|${ins.doneMin}|${ins.doneCount}|${ins.count}|${ins.todoCount}|${ins.doingCount}|${ins.cancelledCount}|${ins.completion}|${ins.streak}|${ins.streakStart}|${ins.firstDone}|${bestStreak}`
+  useEffect(() => {
+    // when the period/data changes, reset all dice to face 0 (the headline
+    // value — e.g. "Planned time") so the new data is visible immediately,
+    // THEN resume the 5s cascade right → left
+    setFaces([0, 0, 0, 0])
+    const roll = () => {
+      for (let k = 0; k < 4; k++) {
+        const ci = 3 - k
+        const len = kpiFaces[ci].length
+        window.setTimeout(() => {
+          setFaces((f) => ({ ...f, [ci]: ((f[ci] ?? 0) + 1) % len }))
+        }, k * 150)
+      }
+    }
+    const first = window.setTimeout(roll, 1500)
+    const id = window.setInterval(roll, 5000)
+    return () => {
+      window.clearTimeout(first)
+      window.clearInterval(id)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statsKey])
+
+  const donutKids = (parentId: string) => ins.childStats[parentId] ?? []
+  const compKids = (parentId: string) => ins.childStats[parentId] ?? []
+  // when a single parent label is focused, its sublabels are shown by default
+  // (manual expand/collapse still works via explicit state)
+  const effDonut = expandedDonut ?? (focusTop && donutKids(focusTop).length > 0 ? focusTop : null)
+  const effComp = expandedComp ?? (focusTop && compKids(focusTop).length > 0 ? focusTop : null)
+
   return (
     <div className="insights-view">
-      <div className="ins-top">
-        <div className="segmented accent ins-period">
-          {PERIODS.map((p) => (
-            <button key={p.id} className={`seg-btn${period === p.id ? ' active' : ''}`} onClick={() => setPeriod(p.id)}>
-              {p.label}
+      <div className="ins-head">
+        <div className="ins-top">
+          <div className="segmented accent ins-period">
+            {PERIODS.map((p) => (
+              <button key={p.id} className={`seg-btn${period === p.id ? ' active' : ''}`} onClick={() => setPeriod(p.id)}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          {period === 'custom' && (
+            <div className="ins-custom-range">
+              <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} />
+              <span className="ins-custom-arrow">→</span>
+              <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} />
+            </div>
+          )}
+          <div className="ins-subtitle">
+            planned {fmtH(ins.plannedMin)} · completed {fmtH(ins.doneMin)}
+          </div>
+        </div>
+
+        <div className="ins-chips">
+          <button className={`ins-chip${focusTop === null ? ' active' : ''}`} onClick={() => { setFocusTop(null); setExpandedDonut(null); setExpandedComp(null) }}>
+            All labels
+          </button>
+          {parents.map((p: Label) => (
+            <button
+              key={p.id}
+              className={`ins-chip${focusTop === p.id ? ' active' : ''}`}
+              onClick={() => { setFocusTop(p.id); setExpandedDonut(null); setExpandedComp(null) }}
+            >
+              <span className="ins-chip-dot" style={{ background: p.color ?? '#8E8E93' }} />
+              {p.name}
             </button>
           ))}
         </div>
-        <div className="ins-subtitle">
-          {new Date(ins.bestDay ?? Date.now()).getFullYear()} · planned {fmtH(ins.plannedMin)} · completed {fmtH(ins.doneMin)}
-        </div>
-      </div>
 
-      {/* cards — the numbers vernacular */}
-      <div className="ins-cards">
-        <div className="ins-card">
-          <span className="ins-card-icon" style={{ background: 'rgba(10,132,255,.14)', color: 'var(--accent)' }}>⏱</span>
-          <div><div className="ins-card-value">{fmtH(ins.plannedMin)}</div><div className="ins-card-label">Planned time</div></div>
-        </div>
-        <div className="ins-card">
-          <span className="ins-card-icon" style={{ background: 'rgba(52,199,89,.15)', color: 'var(--green)' }}>✓</span>
-          <div><div className="ins-card-value">{ins.doneCount}<span className="ins-card-sub"> / {ins.count}</span></div><div className="ins-card-label">Completed activities</div></div>
-        </div>
-        <div className="ins-card">
-          <span className="ins-card-icon" style={{ background: 'rgba(255,159,10,.16)', color: 'var(--amber)' }}>%</span>
-          <div><div className="ins-card-value">{ins.completion}%</div><div className="ins-card-label">Plan completion</div></div>
-        </div>
-        <div className="ins-card">
-          <span className="ins-card-icon" style={{ background: 'rgba(255,69,58,.14)', color: '#ff453a' }}>🔥</span>
-          <div><div className="ins-card-value">{ins.streak}<span className="ins-card-sub"> day{ins.streak === 1 ? '' : 's'}</span></div><div className="ins-card-label">Completion streak</div></div>
-        </div>
-      </div>
-
-      {/* digest — the words vernacular */}
-      <div className="ins-panel digest">
-        <div className="ins-panel-title">In plain words</div>
-        <ul>
-          {ins.digest.map((s, i) => (
-            <li key={i}>{s}</li>
-          ))}
-        </ul>
-      </div>
-
-      <div className="ins-grid">
-        <div className="ins-panel">
-          <div className="ins-panel-title">Time per label</div>
-          {donut.length === 0 ? <div className="ins-empty">No data yet</div> : (
-            <div className="ins-donut-row">
-              <Donut data={donut} />
-              <div className="ins-legend">
-                {donut.map((d) => (
-                  <div key={d.id ?? 'u'} className="ins-legend-row">
-                    <span className="ins-legend-dot" style={{ background: d.color }} />
-                    <span className="ins-legend-name">{d.name}</span>
-                    <span className="ins-legend-val">{fmtH(d.plannedMin)}</span>
+        {/* dice KPI cards — roll right→left every 5s */}
+        <div className="ins-cards">
+          {kpiFaces.map((facesArr, ci) => {
+            const face = facesArr[faces[ci] ?? 0]
+            return (
+              <div key={ci} className="ins-card kpi" data-card={ci} data-face={faces[ci] ?? 0} title={facesArr.map((f) => `${f.label}: ${f.value}`).join(' · ')}>
+                <div key={`${statsKey}-${faces[ci]}`} className="kpi-face">
+                  <span className="ins-card-icon" style={{ background: face.iconBg, color: face.iconColor }}>{face.icon}</span>
+                  <div>
+                    <div className="ins-card-value">{face.value}</div>
+                    <div className="ins-card-label">{face.label}</div>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="ins-panel">
-          <div className="ins-panel-title">Planned vs done</div>
-          <svg className="chart-svg" viewBox={`0 0 ${Math.max(220, barBuckets.length * 24)} 140`} width="100%" height="150">
-            {barBuckets.map((b, i) => {
-              const x = i * 24 + 4
-              const ph = (b.plannedMin / maxBar) * 100
-              const dh = (b.doneMin / maxBar) * 100
-              return (
-                <g key={i}>
-                  <rect x={x} y={130 - ph} width={9} height={ph} rx={2} fill="var(--accent)" opacity={0.85}>
-                    <title>{b.label}: {fmtH(b.plannedMin)} planned</title>
-                  </rect>
-                  <rect x={x + 11} y={130 - dh} width={9} height={dh} rx={2} fill="var(--green)" opacity={0.9}>
-                    <title>{b.label}: {fmtH(b.doneMin)} done</title>
-                  </rect>
-                  {i % 2 === 0 && <text x={x} y={142} fontSize={8} fill="var(--text-3)">{b.label}</text>}
-                </g>
-              )
-            })}
-          </svg>
-        </div>
-
-        <div className="ins-panel">
-          <div className="ins-panel-title">Busiest hours</div>
-          <svg className="chart-svg" viewBox="0 0 240 110" width="100%" height="120">
-            {ins.hourDist.map((m, h) => {
-              const hh = (m / maxHour) * 80
-              const hot = h === ins.busiestHour
-              return (
-                <rect
-                  key={h}
-                  x={h * 10}
-                  y={100 - hh}
-                  width={8}
-                  height={hh}
-                  rx={1.5}
-                  fill={hot ? 'var(--amber)' : 'var(--accent)'}
-                  opacity={hot ? 1 : 0.55}
-                >
-                  <title>{String(h).padStart(2, '0')}:00 — {fmtH(m)}</title>
-                </rect>
-              )
-            })}
-          </svg>
-          <div className="ins-axis">
-            {[0, 6, 12, 18, 23].map((h) => (
-              <span key={h}>{String(h).padStart(2, '0')}</span>
-            ))}
-          </div>
-        </div>
-
-        <div className="ins-panel">
-          <div className="ins-panel-title">Day of week</div>
-          <svg className="chart-svg" viewBox="0 0 240 110" width="100%" height="120">
-            {ins.weekdayDist.map((m, d) => {
-              const hh = (m / maxWd) * 80
-              const hot = m === Math.max(...ins.weekdayDist) && m > 0
-              return (
-                <rect
-                  key={d}
-                  x={d * 33 + 5}
-                  y={100 - hh}
-                  width={22}
-                  height={hh}
-                  rx={3}
-                  fill={hot ? 'var(--amber)' : 'var(--accent)'}
-                  opacity={hot ? 1 : 0.6}
-                >
-                  <title>{WD[d]}: {fmtH(m)}</title>
-                </rect>
-              )
-            })}
-          </svg>
-          <div className="ins-axis">
-            {WD.map((w) => (
-              <span key={w}>{w[0]}</span>
-            ))}
-          </div>
-        </div>
-
-        <div className="ins-panel wide">
-          <div className="ins-panel-title">Last 16 weeks of activity</div>
-          <div className="heatmap">
-            {ins.heatmap.map((c, i) => {
-              const intensity = c.min === 0 ? 0 : 0.25 + Math.min(0.75, c.min / 240)
-              return (
-                <span
-                  key={i}
-                  className="heat-cell"
-                  style={c.min === 0 ? undefined : { background: `rgba(10,132,255,${intensity})` }}
-                  title={`${c.date}: ${fmtH(c.min)} planned`}
-                />
-              )
-            })}
-          </div>
-          <div className="ins-axis heat-legend">
-            <span>Less</span>
-            <span className="heat-cell" style={{ background: 'rgba(10,132,255,.3)' }} />
-            <span className="heat-cell" style={{ background: 'rgba(10,132,255,.6)' }} />
-            <span className="heat-cell" style={{ background: 'rgba(10,132,255,.95)' }} />
-            <span>More</span>
-          </div>
-        </div>
-
-        <div className="ins-panel wide">
-          <div className="ins-panel-title">Label completion</div>
-          {ins.perLabel.length === 0 ? (
-            <div className="ins-empty">No data yet</div>
-          ) : (
-            ins.perLabel.slice(0, 6).map((p) => (
-              <div key={p.id ?? 'u'} className="ins-progress">
-                <span className="ins-progress-name" style={{ color: p.color }}>{p.name}</span>
-                <div className="ins-progress-track">
-                  <div className="ins-progress-done" style={{ width: `${p.completion}%`, background: p.color }} />
                 </div>
-                <span className="ins-progress-val">{p.completion}% · {fmtH(p.doneMin)}/{fmtH(p.plannedMin)}</span>
               </div>
-            ))
-          )}
+            )
+          })}
+        </div>
+      </div>
+
+      <div className="ins-scroll">
+        <div className="ins-panel digest">
+          <div className="ins-panel-title">In plain words</div>
+          <ul>
+            {ins.digest.map((s, i) => (
+              <li key={i}>{s}</li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="ins-grid">
+          <div className="ins-panel">
+            <div className="ins-panel-title">Time per label</div>
+            {donut.length === 0 ? <div className="ins-empty">No data yet</div> : (
+              <>
+                <div className="ins-donut-row">
+                  <Donut data={donut} />
+                  <div className="ins-legend">
+                    {donut.map((d) => {
+                      const kids = donutKids(d.id ?? '')
+                      const expandable = kids.length > 0
+                      return (
+                        <button
+                          key={d.id ?? 'u'}
+                          className={`ins-legend-row${expandable ? ' expandable' : ''}${effDonut === d.id ? ' open' : ''}`}
+                          onClick={() => expandable && setExpandedDonut(effDonut === d.id ? null : d.id)}
+                        >
+                          <span className="ins-legend-dot" style={{ background: d.color }} />
+                          <span className="ins-legend-name">{d.name}</span>
+                          <span className="ins-legend-val">{fmtH(d.plannedMin)}</span>
+                          {expandable && <span className="ins-caret">{expandedDonut === d.id ? '▾' : '▸'}</span>}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+                {effDonut && donutKids(effDonut).length > 0 && (
+                  <div className="ins-sublabels">
+                    <div className="ins-sublabel-bar">
+                      {donutKids(effDonut).map((c) => (
+                        <span
+                          key={c.id}
+                          className="ins-sublabel-seg"
+                          style={{ width: `${(c.plannedMin / Math.max(1, donutKids(effDonut).reduce((s, x) => s + x.plannedMin, 0))) * 100}%`, background: c.color }}
+                          title={`${c.name}: ${fmtH(c.plannedMin)}`}
+                        />
+                      ))}
+                    </div>
+                    <div className="ins-sublabel-rows">
+                      {donutKids(effDonut).map((c) => (
+                        <span key={c.id} className="ins-subrow">
+                          <span className="ins-legend-dot" style={{ background: c.color }} />
+                          {c.own ? <i>{c.name}</i> : c.name}
+                          <b>{fmtH(c.plannedMin)}</b>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="ins-panel">
+            <div className="ins-panel-title">Planned vs done</div>
+            <svg className="chart-svg" viewBox={`0 0 ${barW()} 150`} width="100%" height="160">
+              {barBuckets.map((b, i) => {
+                const x = i * 30 + 2
+                const ph = (b.plannedMin / maxBar) * 120
+                const dh = (b.doneMin / maxBar) * 120
+                return (
+                  <g key={i}>
+                    <rect x={x} y={126 - ph} width={11} height={ph} rx={2} fill="var(--accent)" opacity={0.85}>
+                      <title>{b.label}: {fmtH(b.plannedMin)} planned</title>
+                    </rect>
+                    <rect x={x + 13} y={126 - dh} width={11} height={dh} rx={2} fill="var(--green)" opacity={0.9}>
+                      <title>{b.label}: {fmtH(b.doneMin)} done</title>
+                    </rect>
+                    {i % Math.max(1, Math.ceil(barBuckets.length / 8)) === 0 && (
+                      <text x={x + 12} y={144} fontSize={8.5} textAnchor="middle" fill="var(--text-3)">{b.label}</text>
+                    )}
+                  </g>
+                )
+              })}
+            </svg>
+          </div>
+
+          <div className="ins-panel">
+            <div className="ins-panel-title">Busiest hours</div>
+            <svg className="chart-svg" viewBox="0 0 240 120" width="100%" height="128">
+              {ins.hourDist.map((m, h) => {
+                const hh = (m / maxHour) * 88
+                const hot = h === ins.busiestHour
+                return (
+                  <rect
+                    key={h}
+                    x={h * 10}
+                    y={100 - hh}
+                    width={8}
+                    height={hh}
+                    rx={1.5}
+                    fill={hot ? 'var(--amber)' : 'var(--accent)'}
+                    opacity={hot ? 1 : 0.55}
+                  >
+                    <title>{String(h).padStart(2, '0')}:00 — {fmtH(m)}</title>
+                  </rect>
+                )
+              })}
+              {[0, 3, 6, 9, 12, 15, 18, 21].map((h) => (
+                <text key={h} x={h * 10 + 4} y={112} fontSize={8} textAnchor="middle" fill="var(--text-3)">
+                  {String(h).padStart(2, '0')}
+                </text>
+              ))}
+            </svg>
+          </div>
+
+          <div className="ins-panel">
+            <div className="ins-panel-title">Day of week</div>
+            <svg className="chart-svg" viewBox="0 0 240 120" width="100%" height="128">
+              {ins.weekdayDist.map((m, d) => {
+                const hh = (m / maxWd) * 88
+                const hot = m === Math.max(...ins.weekdayDist) && m > 0
+                return (
+                  <rect
+                    key={d}
+                    x={d * 33 + 5}
+                    y={100 - hh}
+                    width={22}
+                    height={hh}
+                    rx={3}
+                    fill={hot ? 'var(--amber)' : 'var(--accent)'}
+                    opacity={hot ? 1 : 0.6}
+                  >
+                    <title>{WD[d]}: {fmtH(m)}</title>
+                  </rect>
+                )
+              })}
+              {WD.map((w, d) => (
+                <text key={w} x={d * 33 + 16} y={112} fontSize={8.5} textAnchor="middle" fill="var(--text-3)">
+                  {w[0]}
+                </text>
+              ))}
+            </svg>
+          </div>
+
+          <div className="ins-panel wide">
+            <div className="ins-panel-title">Last 16 weeks of activity</div>
+            <div className="heatmap">
+              {ins.heatmap.map((c, i) => {
+                const intensity = c.min === 0 ? 0 : 0.25 + Math.min(0.75, c.min / 240)
+                return (
+                  <span
+                    key={i}
+                    className="heat-cell"
+                    style={c.min === 0 ? undefined : { background: `rgba(10,132,255,${intensity})` }}
+                    title={`${c.date}: ${fmtH(c.min)} planned`}
+                  />
+                )
+              })}
+            </div>
+            <div className="ins-axis heat-legend">
+              <span>Less</span>
+              <span className="heat-cell" style={{ background: 'rgba(10,132,255,.3)' }} />
+              <span className="heat-cell" style={{ background: 'rgba(10,132,255,.6)' }} />
+              <span className="heat-cell" style={{ background: 'rgba(10,132,255,.95)' }} />
+              <span>More</span>
+            </div>
+          </div>
+
+          <div className="ins-panel wide">
+            <div className="ins-panel-title">Label completion</div>
+            {ins.perLabel.length === 0 ? (
+              <div className="ins-empty">No data yet</div>
+            ) : (
+              ins.perLabel.slice(0, 6).map((p) => {
+                const kids = compKids(p.id ?? '')
+                const expandable = kids.length > 0
+                return (
+                  <div key={p.id ?? 'u'} className="ins-comp-group">
+                    <button
+                      className={`ins-progress${expandable ? ' expandable' : ''}${effComp === p.id ? ' open' : ''}`}
+                      onClick={() => expandable && setExpandedComp(effComp === p.id ? null : p.id)}
+                    >
+                      <span className="ins-progress-name" style={{ color: p.color }}>{p.name}</span>
+                      <div className="ins-progress-track">
+                        <div className="ins-progress-done" style={{ width: `${p.completion}%`, background: p.color }} />
+                      </div>
+                      <span className="ins-progress-val">{p.completion}% · {fmtH(p.doneMin)}/{fmtH(p.plannedMin)}</span>
+                      {expandable && <span className="ins-caret">{expandedComp === p.id ? '▾' : '▸'}</span>}
+                    </button>
+                    {effComp === p.id &&
+                      kids.map((k) => (
+                        <div key={k.id} className={`ins-progress sub${k.own ? ' own' : ''}`}>
+                          <span className="ins-progress-name" style={{ color: k.color }}>{k.own ? '↳ (no sub-label)' : `↳ ${k.name}`}</span>
+                          <div className="ins-progress-track">
+                            <div className="ins-progress-done" style={{ width: `${k.completion}%`, background: k.color }} />
+                          </div>
+                          <span className="ins-progress-val">{k.completion}% · {fmtH(k.doneMin)}/{fmtH(k.plannedMin)}</span>
+                        </div>
+                      ))}
+                  </div>
+                )
+              })
+            )}
+          </div>
         </div>
       </div>
     </div>
   )
+
+  function barW() {
+    return Math.max(220, barBuckets.length * 30)
+  }
 }
 
 /** Simple SVG donut. */

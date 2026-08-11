@@ -8,8 +8,29 @@ const VIEWS = [
   { id: 'insights', label: 'Insights' }
 ] as const
 
-export default function Toolbar() {
+export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
   const ui = useUi()
+
+  if (minimal) {
+    // Insights view: only the view switcher stays
+    return (
+      <div className="toolbar minimal">
+        <div className="tb-right">
+          <div className="segmented">
+            {VIEWS.map((v) => (
+              <button
+                key={v.id}
+                className={`seg-btn${ui.view === v.id ? ' active' : ''}`}
+                onClick={() => ui.setView(v.id)}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="toolbar">

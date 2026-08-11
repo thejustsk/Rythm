@@ -41,6 +41,12 @@ export default function RepeatEditor({ value, onChange, startDate }: Props) {
   const [byday, setByday] = useState<string[]>(parsed?.byday ?? [startDow])
   const [monthday, setMonthday] = useState(parsed?.bymonthday?.[0] ?? start.getDate())
   const [month, setMonth] = useState(parsed?.bymonth?.[0] ?? start.getMonth() + 1)
+  const defaultUntil = () => {
+    const d = new Date(start)
+    d.setMonth(d.getMonth() + 3)
+    const p = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  }
   const [endMode, setEndMode] = useState<'never' | 'until' | 'count'>(
     parsed?.until ? 'until' : parsed?.count ? 'count' : 'never'
   )
@@ -186,7 +192,14 @@ export default function RepeatEditor({ value, onChange, startDate }: Props) {
               <button className={`seg-btn${endMode === 'never' ? ' active' : ''}`} onClick={() => setEndMode('never')}>
                 Never
               </button>
-              <button className={`seg-btn${endMode === 'until' ? ' active' : ''}`} onClick={() => setEndMode('until')}>
+              <button
+                className={`seg-btn${endMode === 'until' ? ' active' : ''}`}
+                onClick={() => {
+                  setEndMode('until')
+                  // prefill a meaningful end date the first time
+                  setUntil((u) => u || defaultUntil())
+                }}
+              >
                 On date
               </button>
               <button className={`seg-btn${endMode === 'count' ? ' active' : ''}`} onClick={() => setEndMode('count')}>

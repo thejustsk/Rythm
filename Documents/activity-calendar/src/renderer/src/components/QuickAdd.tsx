@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useData, useUi } from '@/state/store'
 import { useToasts } from '@/state/toasts'
 import type { EventStatus } from '@shared/types'
+import { parseLocal } from '@/engine/occurrences'
 import { EventFormFields } from './EventForm'
 import RepeatEditor from './RepeatEditor'
 
@@ -21,8 +22,10 @@ export default function QuickAdd() {
   const [status, setStatus] = useState<EventStatus>('todo')
   const [rrule, setRrule] = useState<string | null>(null)
 
+  const rangeValid = parseLocal(end).getTime() > parseLocal(start).getTime()
+
   const submit = async () => {
-    if (!title.trim()) return
+    if (!title.trim() || !rangeValid) return
     await createEvent({
       title: title.trim(),
       description: '',
@@ -52,12 +55,13 @@ export default function QuickAdd() {
           status={status}
           setStatus={setStatus}
         />
+        {!rangeValid && <div className="ef-error">End must be after start</div>}
         <RepeatEditor value={rrule} onChange={setRrule} startDate={start.slice(0, 10)} />
         <div className="dialog-actions">
           <button className="btn" onClick={ui.closeQuickAdd}>
             Cancel
           </button>
-          <button className="btn primary" onClick={() => void submit()} disabled={!title.trim()}>
+          <button className="btn primary" onClick={() => void submit()} disabled={!title.trim() || !rangeValid}>
             Add
           </button>
         </div>

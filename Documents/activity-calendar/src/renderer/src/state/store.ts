@@ -8,7 +8,7 @@ interface DataState {
   labels: Label[]
   loaded: boolean
   load: () => Promise<void>
-  createEvent: (input: EventInput) => Promise<void>
+  createEvent: (input: EventInput) => Promise<CalendarEvent>
   updateEvent: (id: string, patch: Partial<EventInput>) => Promise<void>
   removeEvent: (id: string) => Promise<void>
   /** Re-create a previously deleted event with its original id (undo). */
@@ -33,6 +33,7 @@ export const useData = create<DataState>((set, get) => ({
   createEvent: async (input) => {
     const ev = await window.api.events.create(input)
     set({ events: [...get().events, ev] })
+    return ev
   },
 
   updateEvent: async (id, patch) => {

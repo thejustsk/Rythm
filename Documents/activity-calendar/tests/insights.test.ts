@@ -141,6 +141,223 @@ describe('computeInsights', () => {
     expect(ins.completion).toBe(0)
   })
 
+
+
+describe('uniqueMin (overlap correction)', () => {
+  it('counts overlapping activities only once', () => {
+    const events = [
+      ev('a', '2026-08-10T10:00', '2026-08-10T11:00'),
+      ev('b', '2026-08-10T10:30', '2026-08-10T11:30')
+    ]
+    const ins = computeInsights(events, [], new Set(), range('2026-08-10', 2).start, range('2026-08-10', 2).end)
+    expect(ins.plannedMin).toBe(120) // raw sum (double counts the overlap)
+    expect(ins.uniqueMin).toBe(90) // union of intervals
+  })
+  it('equals planned when nothing overlaps', () => {
+    const events = [
+      ev('a', '2026-08-10T10:00', '2026-08-10T11:00'),
+      ev('b', '2026-08-10T12:00', '2026-08-10T13:00')
+    ]
+    const ins = computeInsights(events, [], new Set(), range('2026-08-10', 2).start, range('2026-08-10', 2).end)
+    expect(ins.uniqueMin).toBe(120)
+    expect(ins.plannedMin).toBe(120)
+  })
+  it('merges chains of overlapping intervals', () => {
+    const events = [
+      ev('a', '2026-08-10T10:00', '2026-08-10T11:00'),
+      ev('b', '2026-08-10T10:30', '2026-08-10T12:00'),
+      ev('c', '2026-08-10T11:30', '2026-08-10T13:00')
+    ]
+    const ins = computeInsights(events, [], new Set(), range('2026-08-10', 2).start, range('2026-08-10', 2).end)
+    expect(ins.plannedMin).toBe(240)
+    expect(ins.uniqueMin).toBe(180)
+  })
+  it('adds a digest note when overlaps are significant', () => {
+    const events = [
+      ev('a', '2026-08-10T10:00', '2026-08-10T11:00'),
+      ev('b', '2026-08-10T10:30', '2026-08-10T11:30')
+    ]
+    const ins = computeInsights(events, [], new Set(), range('2026-08-10', 2).start, range('2026-08-10', 2).end)
+    expect(ins.digest.some((d) => d.includes('overlap') && d.includes('unique busy time'))).toBe(true)
+  })
+})
+
+
+describe('per-day split (overnight events)', () => {
+  it('attributes each day its own share; total counted once', () => {
+    const events = [ev('o', '2026-08-10T22:00', '2026-08-11T00:30', { status: 'done' })]
+    const ins = computeInsights(events, [], new Set(), range('2026-08-10', 3).start, range('2026-08-10', 3).end)
+    expect(ins.plannedMin).toBe(150) // counted once
+    const d1 = ins.perDay.find((d) => d.date === '2026-08-10')
+    const d2 = ins.perDay.find((d) => d.date === '2026-08-11')
+    expect(d1?.plannedMin).toBe(120)
+    expect(d2?.plannedMin).toBe(30)
+    expect(d1?.doneMin).toBe(120)
+    expect(d2?.doneMin).toBe(30)
+    // hour distribution spans hours 22, 23 and 0 (each minute in its real hour)
+    expect(ins.hourDist[22]).toBe(60)
+    expect(ins.hourDist[23]).toBe(60)
+    expect(ins.hourDist[0]).toBe(30)
+  })
+})
+
+describe('parent own-part stats', () => {
+  it('reports the parent\'s own (non-sublabel) share separately', () => {
+    const labels = [
+      lbl('fit', 'Fitness', '#10B981'),
+      lbl('gym', 'Gym', '#F97316', 'fit')
+    ]
+    const events = [
+      ev('own', '2026-08-10T09:00', '2026-08-10T10:00', { labelId: 'fit' }), // parent directly
+      ev('g', '2026-08-10T11:00', '2026-08-10T12:00', { labelId: 'gym' }) // child
+    ]
+    const ins = computeInsights(events, labels, new Set(), range('2026-08-10', 2).start, range('2026-08-10', 2).end)
+    const kids = ins.childStats['fit']
+    expect(kids).toHaveLength(2)
+    const own = kids.find((k) => k.own)
+    expect(own?.name).toContain('no sub-label')
+    expect(own?.plannedMin).toBe(60)
+    expect(kids.find((k) => k.id === 'gym')?.plannedMin).toBe(60)
+    // parent total includes both parts
+    expect(ins.perLabel[0].plannedMin).toBe(120)
+  })
+})
+
+describe('streak skips days with no planned events', () => {
+  const dIso = (offset: number) => {
+    const d = new Date()
+    d.setDate(d.getDate() + offset)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+  it('a gap day without planned events does not break the streak', () => {
+    const events = [
+      ev('t', dIso(0) + 'T09:00', dIso(0) + 'T10:00', { status: 'done' }),
+      ev('b', dIso(-2) + 'T09:00', dIso(-2) + 'T10:00', { status: 'done' })
+      // yesterday: nothing planned → skipped
+    ]
+    const ins = computeInsights(events, [], new Set(), new Date(Date.now() - 10 * 86400000), new Date(Date.now() + 86400000))
+    expect(ins.streak).toBe(2)
+    expect(ins.streakStart).toBe(dIso(-2))
+  })
+  it('a planned-but-not-done day DOES break the streak', () => {
+    const events = [
+      ev('t', dIso(0) + 'T09:00', dIso(0) + 'T10:00', { status: 'done' }),
+      ev('y', dIso(-1) + 'T09:00', dIso(-1) + 'T10:00', { status: 'todo' })
+    ]
+    const ins = computeInsights(events, [], new Set(), new Date(Date.now() - 10 * 86400000), new Date(Date.now() + 86400000))
+    expect(ins.streak).toBe(1)
+    expect(ins.streakStart).toBe(dIso(0))
+  })
+  it('tracks first completion ever', () => {
+    const events = [
+      ev('a', dIso(-5) + 'T09:00', dIso(-5) + 'T10:00', { status: 'done' }),
+      ev('b', dIso(-2) + 'T09:00', dIso(-2) + 'T10:00', { status: 'done' })
+    ]
+    const ins = computeInsights(events, [], new Set(), new Date(Date.now() - 10 * 86400000), new Date(Date.now() + 86400000))
+    expect(ins.firstDone).toBe(dIso(-5))
+  })
+})
+
+
+describe('streak start correctness', () => {
+  const dIso = (offset: number) => {
+    const d = new Date()
+    d.setDate(d.getDate() + offset)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+  it('streak start = the OLDEST day of the current streak', () => {
+    const events = [
+      ev('a', dIso(0) + 'T09:00', dIso(0) + 'T10:00', { status: 'done' }),
+      ev('b', dIso(-1) + 'T09:00', dIso(-1) + 'T10:00', { status: 'done' }),
+      ev('c', dIso(-3) + 'T09:00', dIso(-3) + 'T10:00', { status: 'done' }) // gap day -2 skipped
+    ]
+    const ins = computeInsights(events, [], new Set(), new Date(Date.now() - 10 * 86400000), new Date(Date.now() + 86400000))
+    expect(ins.streak).toBe(3)
+    expect(ins.streakStart).toBe(dIso(-3))
+  })
+  it('streak counts today even when today has only a done event', () => {
+    const events = [ev('a', dIso(0) + 'T09:00', dIso(0) + 'T10:00', { status: 'done' })]
+    const ins = computeInsights(events, [], new Set(), new Date(Date.now() - 10 * 86400000), new Date(Date.now() + 86400000))
+    expect(ins.streak).toBe(1)
+    expect(ins.streakStart).toBe(dIso(0))
+  })
+})
+
+describe('status buckets', () => {
+  it('counts todo/doing/cancelled separately', () => {
+    const events = [
+      ev('a', '2026-08-10T09:00', '2026-08-10T10:00', { status: 'todo' }),
+      ev('b', '2026-08-10T10:00', '2026-08-10T11:00', { status: 'doing' }),
+      ev('c', '2026-08-10T11:00', '2026-08-10T12:00', { status: 'cancelled' }),
+      ev('d', '2026-08-10T12:00', '2026-08-10T13:00', { status: 'done' })
+    ]
+    const ins = computeInsights(events, [], new Set(), range('2026-08-10', 2).start, range('2026-08-10', 2).end)
+    expect(ins.todoCount).toBe(1)
+    expect(ins.doingCount).toBe(1)
+    expect(ins.cancelledCount).toBe(1)
+    expect(ins.doneCount).toBe(1)
+    expect(ins.todoMin).toBe(60)
+    expect(ins.doingMin).toBe(60)
+    expect(ins.cancelledMin).toBe(60)
+    expect(ins.plannedMin).toBe(180) // cancelled excluded from planned
+  })
+})
+
+describe('topLabelId filter (parent-label insights)', () => {
+  it('only includes events whose top-level label matches', () => {
+    const labels = [
+      lbl('fit', 'Fitness', '#10B981'),
+      lbl('gym', 'Gym', '#F97316', 'fit'),
+      lbl('work', 'Work', '#3B82F6')
+    ]
+    const events = [
+      ev('g', '2026-08-10T09:00', '2026-08-10T10:00', { labelId: 'gym' }),
+      ev('w', '2026-08-10T11:00', '2026-08-10T12:00', { labelId: 'work' })
+    ]
+    const ins = computeInsights(events, labels, new Set(), range('2026-08-10', 2).start, range('2026-08-10', 2).end, 'fit')
+    expect(ins.plannedMin).toBe(60)
+    expect(ins.perLabel).toHaveLength(1)
+    expect(ins.perLabel[0].name).toBe('Fitness')
+    expect(ins.digest[0]).toContain('Fitness')
+  })
+  it('excludes unlabelled events when filtered', () => {
+    const events = [
+      ev('u', '2026-08-10T09:00', '2026-08-10T10:00'),
+      ev('g', '2026-08-10T10:00', '2026-08-10T11:00', { labelId: 'gym' })
+    ]
+    const labels = [lbl('fit', 'Fitness', '#10B981'), lbl('gym', 'Gym', '#F97316', 'fit')]
+    const ins = computeInsights(events, labels, new Set(), range('2026-08-10', 2).start, range('2026-08-10', 2).end, 'fit')
+    expect(ins.plannedMin).toBe(60)
+  })
+})
+
+describe('childStats (sublabel details)', () => {
+  it('collects sub-label stats under their parent (only when children exist)', () => {
+    const labels = [
+      lbl('fit', 'Fitness', '#10B981'),
+      lbl('gym', 'Gym', '#F97316', 'fit'),
+      lbl('walk', 'Walk', null, 'fit'),
+      lbl('work', 'Work', '#3B82F6')
+    ]
+    const events = [
+      ev('g', '2026-08-10T09:00', '2026-08-10T10:00', { labelId: 'gym', status: 'done' }),
+      ev('w', '2026-08-10T10:00', '2026-08-10T11:00', { labelId: 'walk' })
+    ]
+    const ins = computeInsights(events, labels, new Set(), range('2026-08-10', 2).start, range('2026-08-10', 2).end)
+    const kids = ins.childStats['fit']
+    expect(kids).toBeDefined()
+    expect(kids).toHaveLength(2)
+    const gym = kids.find((k) => k.name === 'Gym')
+    expect(gym?.plannedMin).toBe(60)
+    expect(gym?.doneMin).toBe(60)
+    expect(gym?.color).toBe('#F97316')
+    const walk = kids.find((k) => k.name === 'Walk')
+    expect(walk?.color).toBe('#10B981') // inherits parent colour
+    // a parent without children gets no entry
+    expect(ins.childStats['work']).toBeUndefined()
+  })
+})
+
   it('busiestHour is 0 when empty and correct otherwise', () => {
     const empty = computeInsights([], [], new Set(), range('2026-08-10', 2).start, range('2026-08-10', 2).end)
     expect(empty.busiestHour).toBe(0)

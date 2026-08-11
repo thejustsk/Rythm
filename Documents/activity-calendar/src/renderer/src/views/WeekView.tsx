@@ -4,7 +4,7 @@ import { useToasts } from '@/state/toasts'
 import { computeOccurrences, occurrencesForDay } from '@/engine/occurrences'
 import type { Occurrence } from '@/engine/occurrences'
 import { startOfDay, addDays } from '@/engine/recurrence'
-import { blockBox, layoutClusters, snap15, toMinutes, minutesToHM, DAY_MINUTES, PX_PER_MIN } from '@/lib/timegrid'
+import { blockBox, blockBoxForDay, layoutClusters, snap15, snap15Rel, toMinutes, minutesToHM, localFromDayMinutes, relMinFrom, dayRelMins, DAY_MINUTES, PX_PER_MIN } from '@/lib/timegrid'
 import EventBlock from '@/components/EventBlock'
 
 interface DragState {
@@ -69,8 +69,9 @@ export default function WeekView({ days }: Props) {
   const commitDrag = async (d: DragState) => {
     const ev = d.occ.event
     const day = days[d.curDayIdx]
-    const startLocal = `${iso(day)}T${minutesToHM(d.curStartMin)}`
-    const endLocal = `${iso(day)}T${minutesToHM(d.curEndMin)}`
+    // absolute minutes → local strings (handles overnight/multi-day ends)
+    const startLocal = localFromDayMinutes(day, d.curStartMin)
+    const endLocal = localFromDayMinutes(day, d.curEndMin)
     const data = useData.getState()
     const toasts = useToasts.getState()
     if (ev.rrule && !d.occ.isOverride) {
@@ -110,17 +111,22 @@ export default function WeekView({ days }: Props) {
       dragging = true
       const cols = Array.from(gridRef.current!.querySelectorAll('.day-col')).map((c) => c.getBoundingClientRect())
       const dayIdx = Math.max(0, cols.findIndex((r) => ev.clientX >= r.left && ev.clientX < r.right))
+      // Relative to the GRABBED day's midnight: for a multi-day event grabbed on
+      // its 2nd day, the start is negative (the day before) — this keeps the
+      // whole span intact when dragging/resizing (bug #3).
+      const relStart = relMinFrom(days[dayIdx], occ.start)
+      const relEnd = relMinFrom(days[dayIdx], occ.end)
       const st: DragState = {
         occ,
         mode,
         startX,
         startY,
-        origStartMin: toMinutes(occ.start),
-        origEndMin: toMinutes(occ.end),
+        origStartMin: relStart,
+        origEndMin: relEnd,
         origDayIdx: dayIdx,
         curDayIdx: dayIdx,
-        curStartMin: toMinutes(occ.start),
-        curEndMin: toMinutes(occ.end)
+        curStartMin: relStart,
+        curEndMin: relEnd
       }
       dragRef.current = st
       setDrag(st)
@@ -138,7 +144,9 @@ export default function WeekView({ days }: Props) {
       let next: DragState
       if (cur.mode === 'move') {
         const dur = cur.origEndMin - cur.origStartMin
-        const newStart = Math.min(snap15(cur.origStartMin + dy / PX_PER_MIN), DAY_MINUTES - 15)
+        // allow negatives (multi-day start before the grabbed day)
+        let newStart = snap15Rel(cur.origStartMin + dy / PX_PER_MIN)
+        if (cur.origStartMin >= 0) newStart = Math.min(newStart, DAY_MINUTES - 15)
         let dayIdx = cur.origDayIdx
         if (gridRef.current) {
           const rects = Array.from(gridRef.current.querySelectorAll('.day-col')).map((c) => c.getBoundingClientRect())
@@ -147,7 +155,8 @@ export default function WeekView({ days }: Props) {
         }
         next = { ...cur, curStartMin: newStart, curEndMin: newStart + dur, curDayIdx: dayIdx }
       } else {
-        const newEnd = Math.min(Math.max(snap15(cur.origEndMin + dy / PX_PER_MIN), cur.origStartMin + 15), DAY_MINUTES)
+        // allow resizing past midnight (overnight events): up to ~2 days
+        const newEnd = Math.min(Math.max(snap15Rel(cur.origEndMin + dy / PX_PER_MIN), cur.origStartMin + 15), DAY_MINUTES + 1440)
         next = { ...cur, curEndMin: newEnd }
       }
       dragRef.current = next
@@ -253,14 +262,26 @@ export default function WeekView({ days }: Props) {
             const layout = layoutClusters(
               dayOccs
                 .filter((o) => !(drag && o.key === drag.occ.key))
-                .map((o) => ({ item: o, startMin: toMinutes(o.start), endMin: toMinutes(o.end) }))
+                .map((o) => {
+                  const rel = dayRelMins(day, o.start, o.end)
+                  return { item: o, startMin: rel.startMin, endMin: rel.endMin }
+                })
             )
-            let colOccs = dayOccs.filter(
-              (o) => !(drag && o.key === drag.occ.key && drag.curDayIdx !== dayIdx)
-            )
-            // cross-day drag: render the dragged block in the target column
-            if (drag && drag.curDayIdx === dayIdx && drag.origDayIdx !== dayIdx) {
-              colOccs = [...colOccs, drag.occ]
+            // during a drag the dragged occurrence is hidden from the normal
+            // list and PREVIEW chunks are rendered on every column it spans —
+            // so a multi-day event keeps BOTH visible parts while dragging
+            // (no vanishing/popping back)
+            let colOccs = dayOccs.filter((o) => !(drag && o.key === drag.occ.key))
+            if (drag) {
+              const mid = new Date(days[drag.curDayIdx])
+              mid.setHours(0, 0, 0, 0)
+              const dStart = new Date(mid.getTime() + drag.curStartMin * 60000)
+              const dEnd = new Date(mid.getTime() + drag.curEndMin * 60000)
+              const thisDayStart = new Date(day.getFullYear(), day.getMonth(), day.getDate())
+              const thisDayEnd = new Date(thisDayStart.getTime() + 86400000)
+              if (dStart.getTime() < thisDayEnd.getTime() && dEnd.getTime() > thisDayStart.getTime()) {
+                colOccs = [...colOccs, drag.occ]
+              }
             }
             return (
               <div key={key} className="day-col" data-day={key}>
@@ -277,8 +298,18 @@ export default function WeekView({ days }: Props) {
                 {colOccs.map((o) => {
                   const isDragged = drag && o.key === drag.occ.key
                   const box = isDragged
-                    ? blockBox(drag!.curStartMin, drag!.curEndMin, PX_PER_MIN)
-                    : blockBox(toMinutes(o.start), toMinutes(o.end), PX_PER_MIN)
+                    ? (() => {
+                        // preview clipped to THIS column (each day shows its own part)
+                        const mid = new Date(days[drag!.curDayIdx])
+                        mid.setHours(0, 0, 0, 0)
+                        return blockBoxForDay(
+                          new Date(mid.getTime() + drag!.curStartMin * 60000),
+                          new Date(mid.getTime() + drag!.curEndMin * 60000),
+                          day,
+                          PX_PER_MIN
+                        )
+                      })()
+                    : blockBoxForDay(o.start, o.end, day, PX_PER_MIN)
                   const displayOcc = isDragged ? occWithDragTime(o, drag!, days) : o
                   return (
                     <div

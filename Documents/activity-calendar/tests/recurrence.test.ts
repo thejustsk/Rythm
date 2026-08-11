@@ -107,6 +107,15 @@ describe('ruleToHuman', () => {
   })
 })
 
+
+describe('ruleToHuman is crash-proof', () => {
+  it('handles null / undefined / empty (repeat set to None)', () => {
+    expect(ruleToHuman(null)).toBe('')
+    expect(ruleToHuman(undefined)).toBe('')
+    expect(ruleToHuman('')).toBe('')
+  })
+})
+
 describe('buildRRule', () => {
   it('weekly with weekdays', () => {
     expect(buildRRule({ freq: 'WEEKLY', byday: ['MO', 'WE', 'FR'] })).toBe('FREQ=WEEKLY;BYDAY=MO,WE,FR')
