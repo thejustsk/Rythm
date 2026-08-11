@@ -1,0 +1,141 @@
+import { create } from 'zustand'
+import type { CalendarEvent, EventInput, EventStatus, Label } from '@shared/types'
+
+// ---------------- data store ----------------
+
+interface DataState {
+  events: CalendarEvent[]
+  labels: Label[]
+  loaded: boolean
+  load: () => Promise<void>
+  createEvent: (input: EventInput) => Promise<void>
+  updateEvent: (id: string, patch: Partial<EventInput>) => Promise<void>
+  removeEvent: (id: string) => Promise<void>
+  /** Create a one-off override copy of a recurring event + skip that day in the series — atomically. */
+  applyOverride: (override: EventInput, masterId: string, exdates: string[]) => Promise<void>
+  createLabel: (name: string, color: string | null, parentId: string | null) => Promise<void>
+}
+
+export const useData = create<DataState>((set, get) => ({
+  events: [],
+  labels: [],
+  loaded: false,
+
+  load: async () => {
+    const [events, labels] = await Promise.all([window.api.events.list(), window.api.labels.list()])
+    set({ events, labels, loaded: true })
+  },
+
+  createEvent: async (input) => {
+    const ev = await window.api.events.create(input)
+    set({ events: [...get().events, ev] })
+  },
+
+  updateEvent: async (id, patch) => {
+    const ev = await window.api.events.update(id, patch)
+    set({ events: get().events.map((e) => (e.id === id ? ev : e)) })
+  },
+
+  removeEvent: async (id) => {
+    await window.api.events.remove(id)
+    set({ events: get().events.filter((e) => e.id !== id && e.parentId !== id) })
+  },
+
+  applyOverride: async (override, masterId, exdates) => {
+    const created = await window.api.events.create(override)
+    const updated = await window.api.events.update(masterId, { exdates })
+    set((s) => ({
+      events: [...s.events.filter((e) => e.id !== masterId && e.id !== created.id), updated, created]
+    }))
+  },
+
+  createLabel: async (name, color, parentId) => {
+    const label = await window.api.labels.create(name, color, parentId)
+    set({ labels: [...get().labels, label] })
+  }
+}))
+
+// ---------------- ui store ----------------
+
+export type View = 'day' | 'week' | 'month' | 'agenda'
+
+export interface QuickAddState {
+  open: boolean
+  date: string // 'yyyy-MM-dd'
+  time: string // 'HH:mm'
+}
+
+interface UiState {
+  view: View
+  cursor: Date
+  statusFilter: EventStatus | 'all'
+  hiddenLabels: Set<string>
+  search: string
+  quickAdd: QuickAddState | null
+  editorKey: string | null
+  setView: (v: View) => void
+  setCursor: (d: Date) => void
+  navigate: (days: number) => void
+  goToday: () => void
+  setStatusFilter: (s: EventStatus | 'all') => void
+  toggleLabelHidden: (id: string) => void
+  setSearch: (s: string) => void
+  openQuickAdd: (date?: string, time?: string) => void
+  closeQuickAdd: () => void
+  /** Open the editor for a specific event (not its render key). */
+  openEditor: (eventId: string, originDate: string) => void
+  closeEditor: () => void
+}
+
+const pad = (n: number) => String(n).padStart(2, '0')
+export const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+export const hm = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`
+
+const initialView = (): View => {
+  const v = new URLSearchParams(location.search).get('view')
+  return v === 'day' || v === 'week' || v === 'month' || v === 'agenda' ? v : 'month'
+}
+
+export const useUi = create<UiState>((set, get) => ({
+  view: initialView(),
+  cursor: new Date(),
+  statusFilter: 'all',
+  hiddenLabels: new Set<string>(),
+  search: '',
+  quickAdd: null,
+  editorKey: null,
+
+  setView: (v) => set({ view: v }),
+  setCursor: (d) => set({ cursor: d }),
+  navigate: (days) => {
+    const d = new Date(get().cursor)
+    d.setDate(d.getDate() + days)
+    set({ cursor: d })
+  },
+  goToday: () => set({ cursor: new Date() }),
+  setStatusFilter: (s) => set({ statusFilter: s }),
+  toggleLabelHidden: (id) => {
+    const next = new Set(get().hiddenLabels)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    set({ hiddenLabels: next })
+  },
+  setSearch: (s) => set({ search: s }),
+  openQuickAdd: (date, time) => {
+    const d = date ? new Date(date + 'T00:00:00') : new Date()
+    const t = time ?? '09:00'
+    set({ quickAdd: { open: true, date: date ?? iso(d), time: t } })
+  },
+  closeQuickAdd: () => set({ quickAdd: null }),
+  openEditor: (eventId, originDate) => set({ editorKey: `${eventId}|${originDate}` }),
+  closeEditor: () => set({ editorKey: null })
+}))
+
+/** Labels that are hidden (filtered out) — parent hides its children too. */
+export function hiddenLabelIds(labels: Label[], hidden: Set<string>): Set<string> {
+  const out = new Set<string>()
+  for (const l of labels) {
+    if (hidden.has(l.id) || (l.parentId && hidden.has(l.parentId))) out.add(l.id)
+  }
+  return out
+}
