@@ -6,6 +6,7 @@ import { seedIfEmpty } from './db/seed'
 import { registerEventHandlers } from './ipc/events'
 import { registerLabelHandlers } from './ipc/labels'
 import { registerSettingsHandlers } from './ipc/settings'
+import { registerGamifyHandlers } from './ipc/gamify'
 import { registerWindowHandlers } from './ipc/window'
 
 const isDev = !app.isPackaged
@@ -103,6 +104,7 @@ app.whenReady().then(() => {
   registerEventHandlers(db)
   registerLabelHandlers(db)
   registerSettingsHandlers(db)
+  registerGamifyHandlers(db)
   registerWindowHandlers()
 
   createWindow()

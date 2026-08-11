@@ -5,19 +5,22 @@ const VIEWS = [
   { id: 'week', label: 'Week' },
   { id: 'month', label: 'Month' },
   { id: 'agenda', label: 'Agenda' },
-  { id: 'insights', label: 'Insights' }
+  { id: 'insights', label: 'Insights' },
+  { id: 'coins', label: '🪙 Coins' }
 ] as const
 
 export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
   const ui = useUi()
 
   if (minimal) {
-    // Insights view: premium heading (shining blue) + only the view switcher
+    // Fullscreen views (Insights/Coins): premium heading + only the view switcher
+    const isCoins = ui.view === 'coins'
     return (
       <div className="toolbar minimal">
         <div className="tb-left">
-          <span className="premium-heading" title="Premium feature">
-            <span className="ph-icon">✦</span> Insights
+          <span className={`premium-heading${isCoins ? ' coins' : ''}`} title="Premium feature">
+            <span className="ph-icon">{isCoins ? '🪙' : '✦'}</span>
+            {isCoins ? 'Coins' : 'Insights'}
           </span>
         </div>
         <div className="tb-right">
@@ -93,5 +96,6 @@ function titleFor(view: string, cursor: Date): string {
     return `${fmt(monday)} – ${fmt(sunday)}`
   }
   if (view === 'insights') return 'Insights'
+  if (view === 'coins') return 'Coins'
   return 'Agenda'
 }

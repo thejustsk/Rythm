@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useData, useUi, hiddenLabelIds } from '@/state/store'
 import { useToasts } from '@/state/toasts'
+import { useCoins } from '@/state/coins'
+import { fmtCoins } from '@/lib/gamification'
 import { computeOccurrences, occurrencesForDay } from '@/engine/occurrences'
 import { startOfDay, addDays } from '@/engine/recurrence'
 import { minutesOnDay } from '@/lib/timegrid'
@@ -25,6 +27,7 @@ export default function Sidebar() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
   const hidden = ui.hiddenLabels
+  const coinBalance = useCoins((s) => s.balance)
 
   const todayStats = useMemo(() => {
     const day = startOfDay(new Date())
@@ -362,6 +365,9 @@ export default function Sidebar() {
           <span className="today-hours">{todayStats.hours.toFixed(1)}h</span> planned
           <span className="dot-sep">·</span>
           <span className="today-done">{todayStats.done} done</span>
+        </div>
+        <div key={coinBalance} className="coin-chip" title="Total Rhythm Coins (all-time balance)">
+          🪙 <b>{fmtCoins(coinBalance)}</b>
         </div>
       </div>
     </aside>

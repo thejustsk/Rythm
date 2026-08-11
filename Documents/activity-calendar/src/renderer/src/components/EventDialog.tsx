@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useData, useUi } from '@/state/store'
+import { useCoins } from '@/state/coins'
 import { useToasts } from '@/state/toasts'
-import type { EventStatus } from '@shared/types'
+import type { EventStatus, ScoreRow } from '@shared/types'
 import { ruleToHuman, rruleUntil } from '@/engine/recurrence'
 import { parseLocal } from '@/engine/occurrences'
+import { computeEarn } from '@/lib/gamification'
 import { EventFormFields } from './EventForm'
 import RepeatEditor from './RepeatEditor'
 
@@ -20,6 +22,7 @@ export function dayBefore(iso: string): string {
 export default function EventDialog() {
   const ui = useUi()
   const { events, updateEvent, removeEvent, applyOverride, restoreEvent, createEvent } = useData()
+  const coins = useCoins()
   const toasts = useToasts.getState()
 
   const occ = useMemo(() => {
@@ -96,9 +99,15 @@ export default function EventDialog() {
       labelId,
       status
     }
+    const wasDone = event.status === 'done'
+    const willBeDone = fields.status === 'done'
+    let savedId = event.id
+    let effOrigin: string
+
     if (canEditOccurrence && applyTo === 'this') {
-      // one-off override: carry over every field (all-day, colour too)
-      await applyOverride(
+      // one-off override: carry over every field (all-day, colour too);
+      // re-saving the same day updates the SAME override row (stable id)
+      const created = await applyOverride(
         {
           ...fields,
           allDay: event.allDay,
@@ -111,6 +120,8 @@ export default function EventDialog() {
         event.id,
         [...(event.exdates ?? []), occ.originDate]
       )
+      savedId = created.id
+      effOrigin = occ.originDate
     } else if (recurring && !isOverride) {
       // RECURRING SERIES: keep the series' own start/end DATES — only the
       // times from the form apply (otherwise earlier occurrences vanish).
@@ -157,12 +168,59 @@ export default function EventDialog() {
         // only the times from the form apply (bug A1 fix).
         await updateEvent(event.id, { ...fields, startLocal: seriesStart, endLocal: seriesEnd, rrule })
       }
+      savedId = event.id
+      effOrigin = occ.originDate
     } else {
       // NON-RECURRING (incl. overrides & multi-day): the form's dates AND times
       // apply verbatim — date edits (trim/extend) must be honoured.
       await updateEvent(event.id, { ...fields, rrule })
+      savedId = event.id
+      effOrigin = start.slice(0, 10)
     }
+
+    // ---- coin correctness ----
+    // 1) left Done → refund but KEEP the score row (marked refunded) so that
+    //    re-marking Done restores silently instead of re-prompting
+    if (wasDone && !willBeDone) {
+      await coins.revertScore(savedId, effOrigin)
+    }
+    // 2) still Done but the occurrence's date moved → the old score is stale:
+    //    refund it so the new date can be scored once (no double earn)
+    else if (wasDone && willBeDone) {
+      const oldOrigin = recurring && !isOverride ? occ.originDate : event.startLocal.slice(0, 10)
+      if (oldOrigin !== effOrigin) {
+        const cleared = await coins.clearScores(savedId)
+        void cleared
+      }
+    }
+
     toasts.push({ message: `Saved "${title.trim()}"`, kind: 'info', duration: 2500 })
+    // M10.2 bonuses: "all planned done" for the affected day + perfect week
+    if (willBeDone) {
+      window.api.coins.allDoneCheck(effOrigin).then((r) => {
+        if (r.award) toasts.push({ message: `🎉 All planned done — +${r.amount} 🪙`, kind: 'info', duration: 4000 })
+      })
+      window.api.coins.perfectWeek().then((r) => {
+        if (r.award) toasts.push({ message: `🏆 Perfect week — +${r.amount} 🪙`, kind: 'info', duration: 4500 })
+      })
+    }
+    // gamification: completed → either restore a previously-refunded score
+    // silently, or ask "How did it go?" (only for single occurrences)
+    if (willBeDone && (applyTo === 'this' || !recurring)) {
+      const existing = await window.api.coins.getScore(savedId, effOrigin)
+      if (existing) {
+        if (!wasDone && existing.refundedAt) {
+          // re-marked Done after a status revert → restore the coins quietly
+          const minutes = (parseLocal(end).getTime() - parseLocal(start).getTime()) / 60000
+          const amount = computeEarn(minutes, existing.scoreType)
+          await coins.restoreScore(savedId, effOrigin, existing.scoreType, amount, event.labelId)
+          toasts.push({ message: `Coins restored for "${title.trim()}"`, kind: 'info', duration: 2500 })
+        }
+        // wasDone → plain re-save → nothing to do
+      } else {
+        coins.setPending({ event: { ...event, id: savedId, startLocal: start, endLocal: end }, originDate: effOrigin })
+      }
+    }
     const newStatus = fields.status
     if (ui.statusFilter !== 'all' && ui.statusFilter !== newStatus) {
       toasts.push({
@@ -177,13 +235,17 @@ export default function EventDialog() {
   /** Skip just this occurrence (series keeps going). */
   const delThis = async () => {
     const prevExdates = [...event.exdates]
+    const { scores, earns } = await coins.clearScores(event.id, occ.originDate)
     await updateEvent(event.id, { exdates: [...prevExdates, occ.originDate] })
     toasts.push({
       message: `Deleted "${event.title}"`,
       kind: 'danger',
       actionLabel: 'Undo',
       onAction: () => {
-        void updateEvent(event.id, { exdates: prevExdates })
+        void (async () => {
+          await updateEvent(event.id, { exdates: prevExdates })
+          if (scores.length > 0) await coins.restoreScores(scores, earns)
+        })()
         toasts.push({ message: `Restored "${event.title}"`, kind: 'info' })
       }
     })
@@ -193,13 +255,17 @@ export default function EventDialog() {
   /** Delete a one-off override. */
   const delOverride = async () => {
     const copy = event
+    const { scores, earns } = await coins.clearScores(event.id)
     await removeEvent(event.id)
     toasts.push({
       message: `Deleted "${copy.title}"`,
       kind: 'danger',
       actionLabel: 'Undo',
       onAction: () => {
-        void restoreEvent(copy)
+        void (async () => {
+          await restoreEvent(copy)
+          if (scores.length > 0) await coins.restoreScores(scores, earns)
+        })()
         toasts.push({ message: `Restored "${copy.title}"`, kind: 'info' })
       }
     })
@@ -210,6 +276,16 @@ export default function EventDialog() {
   const delSeries = async () => {
     const master = event
     const children = events.filter((e) => e.parentId === master.id)
+    const allScores: ScoreRow[] = []
+    const allEarns: Array<{ eventId: string; originDate: string; amount: number; labelId: string | null }> = []
+    const cleared = await coins.clearScores(master.id)
+    allScores.push(...cleared.scores)
+    allEarns.push(...cleared.earns)
+    for (const c of children) {
+      const res = await coins.clearScores(c.id)
+      allScores.push(...res.scores)
+      allEarns.push(...res.earns)
+    }
     await removeEvent(master.id)
     toasts.push({
       message: `Deleted series "${master.title}"`,
@@ -219,6 +295,7 @@ export default function EventDialog() {
         void (async () => {
           await restoreEvent(master)
           for (const c of children) await restoreEvent(c)
+          if (allScores.length > 0) await coins.restoreScores(allScores, allEarns)
         })()
         toasts.push({ message: `Restored series "${master.title}"`, kind: 'info' })
       }

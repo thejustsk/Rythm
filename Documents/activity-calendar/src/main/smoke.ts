@@ -64,11 +64,39 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       db.close()
     }
   }
+  const dbRun = (sql: string, ...args: unknown[]) => {
+    const db = new Database(dataDir + '/activity-calendar.db')
+    try {
+      db.prepare(sql).run(...args)
+    } finally {
+      db.close()
+    }
+  }
 
 
+
+  /** Close any open modal (score prompt / editor / quickadd) so stray dialogs
+   *  never block subsequent interactions (defensive, keeps the suite stable). */
+  const dismissOverlays = async () => {
+    const any = await js(`(() => {
+      const o = document.querySelector('.overlay')
+      if (!o) return false
+      const skip = o.querySelector('.score-prompt .btn')
+      if (skip) skip.click()
+      else {
+        // click the backdrop (target === currentTarget closes)
+        const r = o.getBoundingClientRect()
+        o.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: r.left + 4, clientY: r.top + 4 }))
+      }
+      return true
+    })()`)
+    if (any) await sleep(300)
+    return any
+  }
 
   /** A REAL click via the input pipeline (generates a genuine click event). */
   const realClick = async (pos: { x: number; y: number } | null) => {
+    await dismissOverlays()
     if (!pos) return false
     win.webContents.sendInputEvent({ type: 'mouseDown', x: pos.x, y: pos.y, button: 'left', clickCount: 1 })
     await sleep(50)
@@ -79,6 +107,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
 
   /** A REAL drag: press, incremental moves, release. */
   const realDrag = async (pos: { x: number; y: number } | null, dx: number, dy: number) => {
+    await dismissOverlays()
     if (!pos) return false
     win.webContents.sendInputEvent({ type: 'mouseDown', x: pos.x, y: pos.y, button: 'left', clickCount: 1 })
     await sleep(50)
@@ -97,6 +126,24 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
 
   const countBlocks = (title: string) =>
     js(`Array.from(document.querySelectorAll('.eb')).filter((e) => e.textContent.includes(${JSON.stringify(title)})).length`)
+
+  /** If the gamification prompt is open, pick the given option (default: On time). */
+  const pickScore = async (opt = 'On time') => {
+    const open = await js(`!!document.querySelector('.score-prompt')`)
+    if (open) {
+      await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('${opt}'))?.click()`)
+      await sleep(400)
+    }
+    return open
+  }
+  const skipScore = async () => {
+    const open = await js(`!!document.querySelector('.score-prompt')`)
+    if (open) {
+      await js(`Array.from(document.querySelectorAll('.score-prompt .btn')).find((b) => b.textContent.trim() === 'Skip')?.click()`)
+      await sleep(300)
+    }
+    return open
+  }
 
   // find a sidebar label row by its exact name
   const labelRowJs = (name: string) =>
@@ -880,6 +927,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'done')`)
     await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
     await sleep(500)
+    await skipScore()
     const vanishStillThere = await js(`Array.from(document.querySelectorAll('.eb')).some((e) => e.textContent.includes('Smoke vanish'))`)
     check('status change keeps the block visible', vanishStillThere)
     const vanishDb = dbGet<{ c: number }>("SELECT COUNT(*) AS c FROM events WHERE title = 'Smoke vanish' AND status = 'done'")
@@ -1270,6 +1318,463 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
     await sleep(150)
 
+    // 2am. M10.1 gamification — earn coins, ledger, refund on delete
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    const bal0 = await js(`window.api.coins.balance()`)
+    await js(`document.querySelector('.new-btn').click()`)
+    await sleep(250)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke coin')`)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T10:00')`)
+    await sleep(100)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T11:00')`)
+    await sleep(100)
+    await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
+    await sleep(500)
+    // mark done → prompt appears
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke coin')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'done')`)
+    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
+    await sleep(600)
+    const promptShown = await js(`!!document.querySelector('.score-prompt')`)
+    check('score prompt appears after marking done', promptShown)
+    const promptAmt = await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('On time'))?.querySelector('i')?.textContent ?? ''`)
+    check('prompt shows coin amounts', promptAmt.includes('🪙'), promptAmt)
+    await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('On time')).click()`)
+    await sleep(600)
+    const bal1 = await js(`window.api.coins.balance()`)
+    check('on-time 1h completion earns 10 coins', Math.round((bal1 - bal0) * 100) / 100 === 10, `${bal0} → ${bal1}`)
+    const coinToast = await js(`Array.from(document.querySelectorAll('.toast')).some((t) => t.textContent.includes('🪙'))`)
+    check('earn toast shown', coinToast)
+    const chipText = await js(`document.querySelector('.coin-chip')?.textContent ?? ''`)
+    check('sidebar coin chip shows balance', chipText.includes(String(Math.round(bal1))), chipText)
+    const txs = await js(`window.api.coins.listTransactions()`)
+    check('ledger has an earn row', Array.isArray(txs) && txs.some((t: any) => t.type === 'earn' && t.amount === 10), JSON.stringify(txs?.[0]))
+    // no second prompt on re-save
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke coin')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
+    await sleep(600)
+    const prompt2 = await js(`!!document.querySelector('.score-prompt')`)
+    check('no duplicate prompt on re-save', !prompt2)
+    // delete → refund
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke coin')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`document.querySelector('.editor .btn.danger').click()`)
+    await sleep(600)
+    const bal2 = await js(`window.api.coins.balance()`)
+    check('delete refunds the coins', Math.round((bal2 - bal0) * 100) / 100 === 0, `${bal0} → ${bal2}`)
+    const txs2 = await js(`window.api.coins.listTransactions()`)
+    check('ledger has a refund row', Array.isArray(txs2) && txs2.some((t: any) => t.type === 'refund'), JSON.stringify(txs2?.[0]))
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(150)
+
+    // 2an. AGENDA BLEED: sticky titles cover the side padding (full-bleed)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Agenda').click()`)
+    await sleep(700)
+    await js(`document.querySelector('.agenda-view').scrollTop = 400`)
+    await sleep(500)
+    const agBleed = await js(`(() => {
+      const view = document.querySelector('.agenda-view')
+      const title = document.querySelector('.agenda-title')
+      if (!view || !title) return null
+      const tr = title.getBoundingClientRect()
+      const probes = [
+        { x: Math.round(tr.left + 6), y: Math.round(tr.top + tr.height / 2) },  // left padding strip
+        { x: Math.round(tr.right - 6), y: Math.round(tr.top + tr.height / 2) }, // right padding strip
+        { x: Math.round(tr.left + tr.width / 2), y: Math.round(tr.top + 4) }
+      ].map((p) => {
+        const el = document.elementFromPoint(p.x, p.y)
+        return el ? title.contains(el) || el === title : false
+      })
+      return { probes, allCovered: probes.every(Boolean) }
+    })()`)
+    check('agenda: sticky title covers side padding (no bleed)', !!agBleed && agBleed.allCovered, JSON.stringify(agBleed))
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+
+    // 2ao. coins: recurring "this occurrence" — score attaches to the OVERRIDE;
+    // delete refunds; re-save never double-earns; status revert refunds
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    const cBase = await js(`window.api.coins.balance()`)
+    await js(`document.querySelector('.new-btn').click()`)
+    await sleep(250)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke cwalk')`)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T10:00')`)
+    await sleep(100)
+    await js(`Array.from(document.querySelectorAll('.quickadd .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'Daily').click()`)
+    await sleep(200)
+    await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
+    await sleep(500)
+    // open today's occurrence → This occurrence → done
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke cwalk')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'This occurrence').click()`)
+    await sleep(150)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'done')`)
+    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
+    await sleep(600)
+    const cProm = await js(`!!document.querySelector('.score-prompt')`)
+    check('recurring this-occurrence done → prompt', cProm)
+    await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('On time')).click()`)
+    await sleep(600)
+    const cBal1 = await js(`window.api.coins.balance()`)
+    check('recurring occurrence earns 10', Math.round((cBal1 - cBase) * 100) / 100 === 10, `${cBase} → ${cBal1}`)
+    // the score must sit on the OVERRIDE row (not the master)
+    const cOvr = dbGet<{ id: string }>("SELECT id FROM events WHERE title = 'Smoke cwalk' AND parent_id IS NOT NULL")
+    const cScore = await js(`window.api.coins.getScore('${cOvr.id}', '${TODAY}')`)
+    check('score attached to the override row', !!cScore && cScore.scoreType === 'on_time', JSON.stringify(cScore))
+    // re-save (no change) → NO prompt, NO double earn
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke cwalk')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
+    await sleep(600)
+    const cProm2 = await js(`!!document.querySelector('.score-prompt')`)
+    const cBal2 = await js(`window.api.coins.balance()`)
+    check('re-save: no prompt + no double earn', !cProm2 && Math.round((cBal2 - cBal1) * 100) / 100 === 0, `prompt=${cProm2} bal=${cBal2}`)
+    const cOvrCount = dbGet<{ c: number }>("SELECT COUNT(*) AS c FROM events WHERE title = 'Smoke cwalk' AND parent_id IS NOT NULL")
+    check('re-save keeps ONE override (in-place update)', cOvrCount.c === 1, String(cOvrCount.c))
+    // status back to todo → refund
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke cwalk')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'todo')`)
+    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
+    await sleep(600)
+    const cBal3 = await js(`window.api.coins.balance()`)
+    check('status back to todo → coins refunded', Math.round((cBal3 - cBase) * 100) / 100 === 0, `${cBase} → ${cBal3}`)
+    // delete the override → no stray coins
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke cwalk')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`document.querySelector('.editor .btn.danger').click()`)
+    await sleep(600)
+    const cBal4 = await js(`window.api.coins.balance()`)
+    check('delete override: balance unchanged (already refunded)', Math.round((cBal4 - cBase) * 100) / 100 === 0, `${cBase} → ${cBal4}`)
+    // cleanup series
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke cwalk')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'Whole series').click()`)
+    await sleep(150)
+    await js(`Array.from(document.querySelectorAll('.editor .btn.danger')).find((b) => b.textContent.trim() === 'Delete series').click()`)
+    await sleep(500)
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(150)
+
+    // 2ap. coins: done + DATE change → old refunded, new scored once
+    const dBase2 = await js(`window.api.coins.balance()`)
+    await js(`document.querySelector('.new-btn').click()`)
+    await sleep(250)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke cdate')`)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T10:00')`)
+    await sleep(100)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T11:00')`)
+    await sleep(100)
+    await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
+    await sleep(500)
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke cdate')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'done')`)
+    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
+    await sleep(600)
+    await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('On time')).click()`)
+    await sleep(600)
+    const dBal1 = await js(`window.api.coins.balance()`)
+    // now move the date to tomorrow while still done
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke cdate')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[0], '${TOMORROW}T10:00')`)
+    await sleep(200)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[1], '${TOMORROW}T11:00')`)
+    await sleep(200)
+    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
+    await sleep(700)
+    const dProm = await js(`!!document.querySelector('.score-prompt')`)
+    check('date change while done → re-prompt for the new date', dProm)
+    await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('On time')).click()`)
+    await sleep(600)
+    const dBal2 = await js(`window.api.coins.balance()`)
+    check('date change: net exactly one earn (old refunded)', Math.round((dBal2 - dBal1) * 100) / 100 === 0, `${dBal1} → ${dBal2}`)
+    const dScoreNew = await js(`window.api.coins.getScore('${dbGet<{ id: string }>("SELECT id FROM events WHERE title = 'Smoke cdate'").id}', '${TOMORROW}')`)
+    check('new date scored', !!dScoreNew)
+    const dScoreOld = await js(`window.api.coins.getScore('${dbGet<{ id: string }>("SELECT id FROM events WHERE title = 'Smoke cdate'").id}', '${TODAY}')`)
+    check('old date score removed', !dScoreOld)
+    // delete → refund
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke cdate')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`document.querySelector('.editor .btn.danger').click()`)
+    await sleep(600)
+    const dBal3 = await js(`window.api.coins.balance()`)
+    check('delete after date change: fully refunded', Math.round((dBal3 - dBase2) * 100) / 100 === 0, String(dBal3))
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(150)
+
+    // 2aq. IPC idempotency: scoring the same key twice earns ONCE
+    const iBase = await js(`window.api.coins.balance()`)
+    await js(`window.api.coins.scoreEvent('idem-1', '${TODAY}', 'on_time', 10, null)`)
+    await js(`window.api.coins.scoreEvent('idem-1', '${TODAY}', 'late', 6, null)`)
+    const iBal = await js(`window.api.coins.balance()`)
+    check('scoring same key twice earns once (idempotent)', Math.round((iBal - iBase) * 100) / 100 === 10, `${iBase} → ${iBal}`)
+    await js(`window.api.coins.clearScores('idem-1')`)
+    const iBal2 = await js(`window.api.coins.balance()`)
+    check('idempotent refund returns to baseline', Math.round((iBal2 - iBase) * 100) / 100 === 0, `${iBase} → ${iBal2}`)
+
+    // 2ar. coins: UNDO of a delete restores the coins (real amounts)
+    const uBase = await js(`window.api.coins.balance()`)
+    await js(`document.querySelector('.new-btn').click()`)
+    await sleep(250)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke undocoins')`)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T10:00')`)
+    await sleep(100)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T11:00')`)
+    await sleep(100)
+    await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
+    await sleep(500)
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke undocoins')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'done')`)
+    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
+    await sleep(600)
+    await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('On time')).click()`)
+    await sleep(600)
+    const uEarn = await js(`window.api.coins.balance()`)
+    check('undo-coins: earned 10', Math.round((uEarn - uBase) * 100) / 100 === 10, `${uBase} → ${uEarn}`)
+    // delete → refund → undo → coins back
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke undocoins')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`document.querySelector('.editor .btn.danger').click()`)
+    await sleep(600)
+    const uAfterDel = await js(`window.api.coins.balance()`)
+    check('undo-coins: delete refunds', Math.round((uAfterDel - uBase) * 100) / 100 === 0, `${uBase} → ${uAfterDel}`)
+    const uUndo = await js(`Array.from(document.querySelectorAll('.toast')).find((t) => t.textContent.includes('Smoke undocoins') && !!t.querySelector('.toast-action'))?.querySelector('.toast-action')?.click() ?? 'none'`)
+    await sleep(800)
+    const uAfterUndo = await js(`window.api.coins.balance()`)
+    const uEventBack = await js(`Array.from(document.querySelectorAll('.eb')).some((e) => e.textContent.includes('Smoke undocoins'))`)
+    check('undo-coins: undo restores the event', uEventBack)
+    check('undo-coins: undo restores the coins (10 back)', Math.round((uAfterUndo - uBase) * 100) / 100 === 10, `${uBase} → ${uAfterUndo}`)
+    // cleanup
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke undocoins')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`document.querySelector('.editor .btn.danger').click()`)
+    await sleep(500)
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(200)
+    const uClean = await js(`window.api.coins.balance()`)
+    check('undo-coins: cleanup delete returns to baseline', Math.round((uClean - uBase) * 100) / 100 === 0, `${uBase} → ${uClean}`)
+
+    // 2as. coins: status revert keeps the score; re-done restores SILENTLY (no prompt)
+    const sBase = await js(`window.api.coins.balance()`)
+    await js(`document.querySelector('.new-btn').click()`)
+    await sleep(250)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke res')`)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T10:00')`)
+    await sleep(100)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T11:00')`)
+    await sleep(100)
+    await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
+    await sleep(500)
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke res')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'done')`)
+    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
+    await sleep(600)
+    await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('On time')).click()`)
+    await sleep(600)
+    const sEarn = await js(`window.api.coins.balance()`)
+    // revert to todo → refund, score row KEPT
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke res')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'todo')`)
+    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
+    await sleep(600)
+    const sRevert = await js(`window.api.coins.balance()`)
+    check('revert: coins refunded on status change back', Math.round((sRevert - sBase) * 100) / 100 === 0, `${sBase} → ${sRevert}`)
+    const sScore = await js(`window.api.coins.getScore('${dbGet<{ id: string }>("SELECT id FROM events WHERE title = 'Smoke res'").id}', '${TODAY}')`)
+    check('revert: score row KEPT (marked refunded)', !!sScore && !!sScore.refundedAt, JSON.stringify(sScore))
+    // re-done → NO prompt, coins restored silently
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke res')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'done')`)
+    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
+    await sleep(700)
+    const sProm = await js(`!!document.querySelector('.score-prompt')`)
+    check('re-done after revert: NO prompt (already gained)', !sProm)
+    const sBal = await js(`window.api.coins.balance()`)
+    check('re-done after revert: coins restored silently (10 back)', Math.round((sBal - sBase) * 100) / 100 === 10, `${sBase} → ${sBal}`)
+    const sScore2 = await js(`window.api.coins.getScore('${dbGet<{ id: string }>("SELECT id FROM events WHERE title = 'Smoke res'").id}', '${TODAY}')`)
+    check('re-done after revert: score no longer refunded', !!sScore2 && !sScore2.refundedAt, JSON.stringify(sScore2))
+    // delete → full refund (no double refund from the earlier revert)
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke res')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`document.querySelector('.editor .btn.danger').click()`)
+    await sleep(600)
+    const sDel = await js(`window.api.coins.balance()`)
+    check('delete after restore: fully refunded (no double)', Math.round((sDel - sBase) * 100) / 100 === 0, `${sBase} → ${sDel}`)
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(150)
+
+    // 2at. chip shows the TOTAL balance (not daily)
+    const chipTitle = await js(`document.querySelector('.coin-chip')?.getAttribute('title') ?? ''`)
+    check('chip labelled as total balance', chipTitle.includes('Total'), chipTitle)
+
+    // 2au. M10.2 — check-in: the app already awarded it on startup today, so
+    // calling again must NOT award (once-per-day rule holds)
+    const ci0 = await js(`window.api.coins.balance()`)
+    const ci1 = await js(`window.api.coins.checkIn()`)
+    check('check-in: no second award same day (streak ≥1 recorded)', !ci1.award && ci1.streak >= 1, JSON.stringify(ci1))
+    const ci2 = await js(`window.api.coins.checkIn()`)
+    check('check-in never awards twice in a day', !ci2.award, JSON.stringify(ci2))
+    const ciBal = await js(`window.api.coins.balance()`)
+    check('check-in: balance unchanged by repeat calls', Math.round((ciBal - ci0) * 100) / 100 === 0, `${ci0} → ${ciBal}`)
+    const ciTx = await js(`window.api.coins.listTransactions()`)
+    check('check-in: bonus transaction exists in the ledger', Array.isArray(ciTx) && ciTx.some((t: any) => t.reason === 'Daily check-in' && t.type === 'bonus'), JSON.stringify(ciTx?.[0]))
+
+    // 2av. M10.2 — "all planned done" bonus (+25) when the whole day resolves
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    const ad0 = await js(`window.api.coins.balance()`)
+    await js(`document.querySelector('.new-btn').click()`)
+    await sleep(250)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke alldone A')`)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T10:00')`)
+    await sleep(100)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T10:30')`)
+    await sleep(100)
+    await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
+    await sleep(500)
+    await js(`document.querySelector('.new-btn').click()`)
+    await sleep(250)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke alldone B')`)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T11:00')`)
+    await sleep(100)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T11:30')`)
+    await sleep(100)
+    await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
+    await sleep(500)
+    // mark A done → not yet all
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke alldone A')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'done')`)
+    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
+    await sleep(700)
+    await pickScore('On time') // earn the 10 for A
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(200)
+    const ad1 = await js(`window.api.coins.balance()`)
+    check('all-done: one done is not enough yet (5 for A only)', Math.round((ad1 - ad0) * 100) / 100 === 5, `${ad0} → ${ad1}`)
+    // mark B done → earn B's score
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke alldone B')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'done')`)
+    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
+    await sleep(900)
+    await pickScore('On time') // earn 5 for B
+    const ad2 = await js(`window.api.coins.balance()`)
+    check('all-done: A+B scored (+10 total)', Math.round((ad2 - ad0) * 100) / 100 === 10, `${ad0} → ${ad2}`)
+    // seeds still pending → no bonus yet
+    const adPre = await js(`window.api.coins.allDoneCheck('${TODAY}')`)
+    check('all-done: not awarded while seeds pending', !adPre.award, JSON.stringify(adPre))
+    // cleanup both
+    for (const t of ['Smoke alldone A', 'Smoke alldone B']) {
+      await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('${t}')); if (el) el.click(); return !!el })()`)
+      await sleep(400)
+      await js(`document.querySelector('.editor .btn.danger').click()`)
+      await sleep(600)
+    }
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(150)
+
+    // 2aw. Coins view renders: balance, 7-day chart, per-label, ledger
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
+    await sleep(700)
+    const cv = await js(`({
+      view: !!document.querySelector('.coins-view'),
+      balance: document.querySelector('.coins-balance-value')?.textContent ?? '',
+      today: document.querySelector('.coins-today-value')?.textContent ?? '',
+      chart: document.querySelectorAll('.coins-view .chart-svg rect').length,
+      perLabel: document.querySelectorAll('.coins-view .ins-progress').length,
+      ledger: document.querySelectorAll('.ledger-row').length
+    })`)
+    check('coins view opens', cv.view)
+    check('coins view shows total balance', cv.balance.length > 0, cv.balance)
+    check('coins view shows today earnings', cv.today.length > 0, cv.today)
+    check('coins view 7-day chart renders', cv.chart >= 7, String(cv.chart))
+    check('coins view per-label rows', cv.perLabel >= 1, String(cv.perLabel))
+    check('coins view ledger rows', cv.ledger >= 1, String(cv.ledger))
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+
+    // 2ay. coins stats: "earned today" matches local-date math from the ledger
+    const st = await js(`window.api.coins.stats()`)
+    const allTxs = await js(`window.api.coins.listTransactions()`)
+    const localNet = await js(`(() => {
+      const pad = (n) => String(n).padStart(2, '0')
+      const localOf = (iso) => { const d = new Date(iso); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) }
+      const today = localOf(new Date().toISOString())
+      const map = new Map()
+      for (const t of ${JSON.stringify(allTxs)}) {
+        const k = localOf(t.ts)
+        const delta = (t.type === 'spend' || t.type === 'refund' ? -t.amount : t.amount)
+        map.set(k, (map.get(k) ?? 0) + delta)
+      }
+      return Math.round((map.get(today) ?? 0) * 100) / 100
+    })()`)
+    check('earned today = local-date ledger net', Math.round((st.today - localNet) * 100) / 100 === 0, `stats=${st.today} manual=${localNet}`)
+
+    // 2az. coins tab: chrome hidden with animation (like insights)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
+    await sleep(700)
+    const cvChrome = await js(`(() => {
+      const sb = document.querySelector('.sidebar')
+      const sbStyle = sb ? getComputedStyle(sb) : null
+      return {
+        sidebarCollapsed: !sb || sbStyle.opacity === '0' || parseFloat(sbStyle.width) <= 1,
+        pillsGone: !!document.querySelector('.status-wrap.gone'),
+        search: !!document.querySelector('.searchbox'),
+        addBtn: !!document.querySelector('.new-btn'),
+        todayBtn: !!document.querySelector('.today-btn'),
+        heading: document.querySelector('.premium-heading')?.textContent.trim() ?? ''
+      }
+    })()`)
+    check('coins: sidebar collapsed + pills/search/add/today hidden', cvChrome.sidebarCollapsed && cvChrome.pillsGone && !cvChrome.search && !cvChrome.addBtn && !cvChrome.todayBtn, JSON.stringify(cvChrome))
+    check('coins: golden heading shown', cvChrome.heading.includes('Coins') && cvChrome.heading.includes('🪙'), cvChrome.heading)
+
+    // 2ba. 7-day chart stretches & centers with the box
+    const cvChart = await js(`(() => {
+      const svg = document.querySelector('.coins-view .chart-stretch')
+      if (!svg) return null
+      const vb = svg.getAttribute('viewBox') ?? ''
+      const w = svg.getBoundingClientRect().width
+      const panel = svg.closest('.ins-panel')?.getBoundingClientRect().width ?? 0
+      return { vb, svgW: Math.round(w), panelW: Math.round(panel), fills: panel > 0 && w / panel > 0.85, bars: svg.querySelectorAll('rect').length }
+    })()`)
+    check('coins: 7-day chart stretched to the box', !!cvChart && cvChart.fills, JSON.stringify(cvChart))
+    check('coins: 7-day chart has 7 bars', !!cvChart && cvChart.bars === 7, String(cvChart?.bars))
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+
+    // 2bc. chart vertically centered in its box + blocking-day explanation
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
+    await sleep(700)
+    const cvCenter = await js(`(() => {
+      const svg = document.querySelector('.coins-view .chart-stretch')
+      if (!svg) return null
+      const sr = svg.getBoundingClientRect()
+      const pr = svg.closest('.ins-panel').getBoundingClientRect()
+      const svgMid = sr.top + sr.height / 2
+      const panelMid = pr.top + pr.height / 2
+      return { delta: Math.abs(svgMid - panelMid), h: pr.height, centered: Math.abs(svgMid - panelMid) < pr.height * 0.2 }
+    })()`)
+    check('coins: 7-day chart vertically centered', !!cvCenter && cvCenter.centered, JSON.stringify(cvCenter))
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    // blocking-day reporting: put a planned-but-not-done day in the window
+    dbRun("INSERT INTO settings (key, value) VALUES ('pw_block_test', '1')")
+    const pwBlock = await js(`window.api.coins.perfectWeek()`)
+    console.log('[smoke] perfectWeek blocking probe:', JSON.stringify(pwBlock))
+    check('weekly: no silent failure — blocking day reported when ineligible', pwBlock.award === false && (pwBlock.blockingDay === null || typeof pwBlock.blockingDay === 'string'), JSON.stringify(pwBlock))
+    dbRun("DELETE FROM settings WHERE key = 'pw_block_test'")
+
     // 2j. bug 2 — the editor must show the SELECTED occurrence's date,
     // not the series' start date; a "This occurrence" status edit lands on that day
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
@@ -1357,6 +1862,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'done')`)
     await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find(b => b.textContent.trim() === 'Save').click()`)
     await sleep(400)
+    await skipScore()
     const done = await js(`Array.from(document.querySelectorAll('.eb')).some(e => e.textContent.includes('Smoke test activity') && e.classList.contains('done'))`)
     check('status change saved & styled (done, faded)', done)
 
@@ -1431,6 +1937,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await sleep(150)
     await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
     await sleep(500)
+    await skipScore() // the event is already done → re-save re-prompts; skip
     const rr = dbGet<{ rrule: string }>("SELECT rrule FROM events WHERE title = 'Smoke test activity' AND parent_id IS NULL")
     check('repeat editor saves weekly rule', rr.rrule === 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=3', String(rr.rrule))
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
@@ -1467,8 +1974,10 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     )
 
     // 5d. delete the override, then the whole series
-    await realClick(await blockPos('Smoke edited occurrence'))
-    await sleep(350)
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(200)
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke edited occurrence')); if (el) el.click(); return !!el })()`)
+    await sleep(450)
     const dbg5d = await js(`({
       editorOpen: !!document.querySelector('.editor'),
       editorTitle: document.querySelector('.editor .ef-title')?.value ?? null,
@@ -1486,8 +1995,10 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     check('override deleted', ovrGone)
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
-    await realClick(await blockPos('Smoke test activity'))
-    await sleep(350)
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(200)
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke test activity')); if (el) el.click(); return !!el })()`)
+    await sleep(450)
     await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'Whole series').click()`)
     await sleep(200)
     await js(`Array.from(document.querySelectorAll('.editor .btn.danger')).find((b) => b.textContent.trim() === 'Delete series').click()`)
@@ -1498,24 +2009,69 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     check('whole series deleted from database', seriesGone.c === 0, `rows=${seriesGone.c}`)
 
     // 6. M4 — dragging one occurrence of a recurring series: override + renders at new time
-    await sleep(600)
-    const walkCountBefore = await countBlocks('Morning walk')
-    await realDrag(await blockPos('Morning walk'), 0, 33)
-    await sleep(600)
-    const ov = dbGet<{ c: number }>("SELECT COUNT(*) AS c FROM events WHERE parent_id = 'evt-walk'")
-    check('dragging a recurring occurrence creates an override', ov.c === 3, `overrides=${ov.c}`)
-    const master = dbGet<{ exdates: string }>("SELECT exdates FROM events WHERE id = 'evt-walk'")
-    // seed(2) + today's status-override (2j) + the moved-back day (2i) = 4 skipped dates
-    check('recurring master keeps all skipped dates', JSON.parse(master.exdates).length === 4, master.exdates)
-    const walkCountAfter = await countBlocks('Morning walk')
-    const walkShowsNewTime = await js(`Array.from(document.querySelectorAll('.eb')).some((e) => e.textContent.includes('07:30–'))`)
+    // (deterministic: use a FRESH daily series so earlier scenarios' exdates/overrides
+    // can't interfere)
+    await js(`document.querySelector('.new-btn').click()`)
+    await sleep(250)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke dragwalk')`)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T06:30')`)
+    await sleep(100)
+    await js(`Array.from(document.querySelectorAll('.quickadd .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'Daily').click()`)
+    await sleep(200)
+    await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
+    await sleep(500)
+    const dwCountBefore = await countBlocks('Smoke dragwalk')
+    await realDrag(await blockPos('Smoke dragwalk'), 0, 33)
+    await sleep(700)
+    const dwOv = dbGet<{ c: number }>("SELECT COUNT(*) AS c FROM events WHERE parent_id IS NOT NULL AND title = 'Smoke dragwalk'")
+    check('dragging a recurring occurrence creates an override', dwOv.c === 1, `overrides=${dwOv.c}`)
+    const dwMaster = dbGet<{ exdates: string }>("SELECT exdates FROM events WHERE title = 'Smoke dragwalk' AND parent_id IS NULL")
+    check('recurring master gets the skipped date', JSON.parse(dwMaster.exdates).length === 1, dwMaster.exdates)
+    const dwAfter = await countBlocks('Smoke dragwalk')
+    const dwShows730 = await js(`Array.from(document.querySelectorAll('.eb')).some((e) => e.textContent.includes('07:30–') && e.textContent.includes('Smoke dragwalk'))`)
     check(
       'recurring occurrence visible at new time (not vanished)',
-      walkCountAfter === walkCountBefore && walkShowsNewTime,
-      `before=${walkCountBefore} after=${walkCountAfter} shows07:30=${walkShowsNewTime}`
+      dwAfter === dwCountBefore && dwShows730,
+      `before=${dwCountBefore} after=${dwAfter} shows07:30=${dwShows730}`
     )
-    const walksAt730 = await js(`Array.from(document.querySelectorAll('.eb')).filter((e) => e.textContent.includes('07:30–')).length`)
-    check('no duplicate/ghost block after recurring drag', walksAt730 === 1, `n=${walksAt730}`)
+    const dwAt730 = await js(`Array.from(document.querySelectorAll('.eb')).filter((e) => e.textContent.includes('07:30–') && e.textContent.includes('Smoke dragwalk')).length`)
+    check('no duplicate/ghost block after recurring drag', dwAt730 === 1, `n=${dwAt730}`)
+    // cleanup
+    await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke dragwalk')); if (el) el.click(); return !!el })()`)
+    await sleep(400)
+    await js(`document.querySelector('.editor .btn.danger').click()`)
+    await sleep(500)
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(150)
+
+    // 2ax. all-done bonus — isolated on TOMORROW (no prior bonus rows can exist
+    // there); everything forced done → +25 exactly once
+    const ax0 = await js(`window.api.coins.balance()`)
+    dbRun("UPDATE events SET status = 'done' WHERE status != 'cancelled'")
+    const axOk = await js(`window.api.coins.allDoneCheck('${TOMORROW}')`)
+    check('all-done: +25 when the whole day resolves (isolated)', axOk.award && axOk.amount === 25, JSON.stringify(axOk))
+    const axAgain = await js(`window.api.coins.allDoneCheck('${TOMORROW}')`)
+    check('all-done: awarded only once per day', !axAgain.award, JSON.stringify(axAgain))
+    const axBal = await js(`window.api.coins.balance()`)
+    check('all-done: balance includes exactly +25', Math.round((axBal - ax0) * 100) / 100 === 25, `${ax0} → ${axBal}`)
+    // perfect week requires 7 days of done — verify the guard (can't award with missed days)
+    const pw = await js(`window.api.coins.perfectWeek()`)
+    console.log('[smoke] perfectWeek result:', JSON.stringify(pw))
+
+    // 2bb. WEEKLY ALL-DONE credit: 2ax forced every past day active+done, so the
+    // perfect-week check must now award +100 exactly once (rest-day rule covered
+    // by unit tests)
+    dbRun("DELETE FROM settings WHERE key LIKE 'perfectWeek.%'") // deterministic: reset the once-per-week guard
+    const wBase = await js(`window.api.coins.balance()`)
+    const pw0 = await js(`window.api.coins.perfectWeek()`)
+    console.log('[smoke] perfectWeek0:', JSON.stringify(pw0))
+    check('weekly all-done: +100 credited once', pw0.award && pw0.amount === 100, JSON.stringify(pw0))
+    const pw1 = await js(`window.api.coins.perfectWeek()`)
+    check('weekly all-done: only once per week', !pw1.award, JSON.stringify(pw1))
+    const wBal = await js(`window.api.coins.balance()`)
+    check('weekly all-done: balance includes exactly +100', Math.round((wBal - wBase) * 100) / 100 === 100, `${wBase} → ${wBal}`)
+    const pwTx = await js(`window.api.coins.listTransactions()`)
+    check('weekly all-done: bonus row in ledger', Array.isArray(pwTx) && pwTx.some((t: any) => t.reason === 'Perfect week' && t.type === 'bonus' && t.amount === 100), JSON.stringify(pwTx?.[0]))
 
     const row2 = dbGet<{ c: number }>(
       "SELECT COUNT(*) AS c FROM events WHERE title IN ('Smoke test activity', 'Smoke edited occurrence')"

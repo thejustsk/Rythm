@@ -13,8 +13,10 @@ interface DataState {
   removeEvent: (id: string) => Promise<void>
   /** Re-create a previously deleted event with its original id (undo). */
   restoreEvent: (ev: CalendarEvent) => Promise<void>
-  /** Create a one-off override copy of a recurring event + skip that day in the series — atomically. */
-  applyOverride: (override: EventInput, masterId: string, exdates: string[]) => Promise<void>
+  /** Create a one-off override copy of a recurring event + skip that day in the series — atomically.
+   *  Re-saving the same origin UPDATES the existing override in place (stable id,
+   *  no duplicates) and returns the final event row. */
+  applyOverride: (override: EventInput, masterId: string, exdates: string[]) => Promise<CalendarEvent>
   createLabel: (name: string, color: string | null, parentId: string | null) => Promise<Label>
   updateLabel: (id: string, patch: { name?: string; color?: string | null; sortOrder?: number; archived?: boolean }) => Promise<void>
   removeLabel: (id: string) => Promise<void>
@@ -66,11 +68,36 @@ export const useData = create<DataState>((set, get) => ({
   },
 
   applyOverride: async (override, masterId, exdates) => {
-    const created = await window.api.events.create(override)
+    const existing = get().events.find(
+      (e) => e.parentId === masterId && e.originDate === override.originDate
+    )
+    let created: CalendarEvent
+    if (existing) {
+      // update in place — keeps the id stable so scores stay attached
+      created = await window.api.events.update(existing.id, {
+        title: override.title,
+        description: override.description,
+        startLocal: override.startLocal,
+        endLocal: override.endLocal,
+        allDay: override.allDay,
+        labelId: override.labelId,
+        colorOverride: override.colorOverride,
+        status: override.status
+      })
+    } else {
+      created = await window.api.events.create(override)
+    }
     const updated = await window.api.events.update(masterId, { exdates })
     set((s) => ({
-      events: [...s.events.filter((e) => e.id !== masterId && e.id !== created.id), updated, created]
+      events: [
+        ...s.events.filter(
+          (e) => e.id !== masterId && e.id !== created.id && !(e.parentId === masterId && e.originDate === override.originDate)
+        ),
+        updated,
+        created
+      ]
     }))
+    return created
   },
 
   createLabel: async (name, color, parentId) => {
@@ -104,7 +131,7 @@ export const useData = create<DataState>((set, get) => ({
 
 // ---------------- ui store ----------------
 
-export type View = 'day' | 'week' | 'month' | 'agenda' | 'insights'
+export type View = 'day' | 'week' | 'month' | 'agenda' | 'insights' | 'coins'
 
 export interface QuickAddState {
   open: boolean
@@ -141,7 +168,7 @@ export const hm = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`
 
 const initialView = (): View => {
   const v = new URLSearchParams(location.search).get('view')
-  return v === 'day' || v === 'week' || v === 'month' || v === 'agenda' || v === 'insights' ? v : 'month'
+  return v === 'day' || v === 'week' || v === 'month' || v === 'agenda' || v === 'insights' || v === 'coins' ? v : 'month'
 }
 
 export const useUi = create<UiState>((set, get) => ({

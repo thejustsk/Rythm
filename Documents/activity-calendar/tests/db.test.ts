@@ -43,6 +43,51 @@ describe('schema & seed', () => {
   })
 })
 
+
+describe('gamification tables', () => {
+  it('scores + earns record and balance derives from the ledger', () => {
+    db.prepare(
+      `INSERT INTO event_scores (event_id, origin_date, score_type, scored_at) VALUES ('g1', '2026-08-10', 'on_time', ?)`
+    ).run(new Date().toISOString())
+    db.prepare(
+      `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason)
+       VALUES ('tx1', ?, 'g1', '2026-08-10', NULL, 'earn', 10, 'Completion score')`
+    ).run(new Date().toISOString())
+    const bal = db
+      .prepare("SELECT COALESCE(SUM(CASE WHEN type IN ('spend','refund') THEN -amount ELSE amount END), 0) AS b FROM coin_transactions")
+      .get() as { b: number }
+    expect(bal.b).toBe(10)
+  })
+  it('clearScores refunds earns for that occurrence', () => {
+    // score an occurrence, then clear only that occurrence
+    db.prepare(
+      `INSERT INTO event_scores (event_id, origin_date, score_type, scored_at) VALUES ('g2', '2026-08-11', 'late', ?)`
+    ).run(new Date().toISOString())
+    db.prepare(
+      `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason)
+       VALUES ('tx2', ?, 'g2', '2026-08-11', NULL, 'earn', 6, 'Completion score')`
+    ).run(new Date().toISOString())
+    db.prepare("DELETE FROM event_scores WHERE event_id = 'g2' AND origin_date = '2026-08-11'").run()
+    db.prepare(
+      `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason)
+       VALUES ('tx2r', ?, 'g2', '2026-08-11', NULL, 'refund', 6, 'Refund on delete')`
+    ).run(new Date().toISOString())
+    const bal = db
+      .prepare("SELECT COALESCE(SUM(CASE WHEN type IN ('spend','refund') THEN -amount ELSE amount END), 0) AS b FROM coin_transactions")
+      .get() as { b: number }
+    expect(bal.b).toBe(10) // tx1 remains
+  })
+  it('milestones table stores reward goals', () => {
+    db.prepare(
+      `INSERT INTO reward_milestones (id, name, icon, cost, notes, achieved_at, created_at)
+       VALUES ('m1', 'Movie night', '🎬', 500, 'Treat myself', NULL, ?)`
+    ).run(new Date().toISOString())
+    const m = db.prepare("SELECT * FROM reward_milestones WHERE id = 'm1'").get() as any
+    expect(m.cost).toBe(500)
+    expect(m.achieved_at).toBeNull()
+  })
+})
+
 describe('CRUD', () => {
   it('creates, updates, deletes an event', () => {
     const id = 'test-1'

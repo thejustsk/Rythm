@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Api, CalendarEvent, EventInput, Label } from '../shared/types'
+import type { Api, CalendarEvent, EventInput, Label, ScoreRow, ScoreType, CoinTransaction } from '../shared/types'
 
 const api: Api = {
   events: {
@@ -20,6 +20,26 @@ const api: Api = {
   settings: {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),
     set: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value)
+  },
+  coins: {
+    scoreEvent: (eventId: string, originDate: string, scoreType: ScoreType, amount: number, labelId: string | null): Promise<{ earned: boolean; amount: number }> =>
+      ipcRenderer.invoke('coins:scoreEvent', eventId, originDate, scoreType, amount, labelId),
+    getScore: (eventId: string, originDate: string): Promise<ScoreRow | null> =>
+      ipcRenderer.invoke('coins:getScore', eventId, originDate),
+    clearScores: (eventId: string, originDate?: string) =>
+      ipcRenderer.invoke('coins:clearScores', eventId, originDate),
+    restoreScores: (rows: Array<{ eventId: string; originDate: string; scoreType: ScoreType; amount: number; labelId: string | null }>) =>
+      ipcRenderer.invoke('coins:restoreScores', rows),
+    revertScore: (eventId: string, originDate: string) =>
+      ipcRenderer.invoke('coins:revertScore', eventId, originDate),
+    restoreScore: (eventId: string, originDate: string, scoreType: ScoreType, amount: number, labelId: string | null) =>
+      ipcRenderer.invoke('coins:restoreScore', eventId, originDate, scoreType, amount, labelId),
+    checkIn: () => ipcRenderer.invoke('coins:checkIn'),
+    allDoneCheck: (originDate: string) => ipcRenderer.invoke('coins:allDoneCheck', originDate),
+    perfectWeek: () => ipcRenderer.invoke('coins:perfectWeek'),
+    stats: () => ipcRenderer.invoke('coins:stats'),
+    balance: (): Promise<number> => ipcRenderer.invoke('coins:balance'),
+    listTransactions: (): Promise<CoinTransaction[]> => ipcRenderer.invoke('coins:listTransactions')
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),

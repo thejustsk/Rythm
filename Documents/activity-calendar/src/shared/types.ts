@@ -52,6 +52,27 @@ export interface EventInput {
   originDate?: string | null
 }
 
+export type ScoreType = 'on_time' | 'late' | 'off_schedule'
+
+export interface ScoreRow {
+  eventId: string
+  originDate: string
+  scoreType: ScoreType
+  scoredAt: string
+  refundedAt: string | null
+}
+
+export interface CoinTransaction {
+  id: string
+  ts: string
+  eventId: string | null
+  originDate: string | null
+  labelId: string | null
+  type: 'earn' | 'bonus' | 'spend' | 'refund'
+  amount: number
+  reason: string
+}
+
 export interface Api {
   events: {
     list(): Promise<CalendarEvent[]>
@@ -69,6 +90,20 @@ export interface Api {
   settings: {
     get(key: string): Promise<string | null>
     set(key: string, value: string): Promise<void>
+  }
+  coins: {
+    scoreEvent(eventId: string, originDate: string, scoreType: ScoreType, amount: number, labelId: string | null): Promise<{ earned: boolean; amount: number }>
+    getScore(eventId: string, originDate: string): Promise<ScoreRow | null>
+    clearScores(eventId: string, originDate?: string): Promise<{ scores: ScoreRow[]; earns: Array<{ eventId: string; originDate: string; amount: number; labelId: string | null }> }>
+    restoreScores(rows: Array<{ eventId: string; originDate: string; scoreType: ScoreType; amount: number; labelId: string | null }>): Promise<void>
+    revertScore(eventId: string, originDate: string): Promise<{ refunded: boolean; amount: number }>
+    restoreScore(eventId: string, originDate: string, scoreType: ScoreType, amount: number, labelId: string | null): Promise<{ restored: boolean }>
+    checkIn(): Promise<{ award: boolean; streak: number; amount: number }>
+    allDoneCheck(originDate: string): Promise<{ award: boolean; amount: number }>
+    perfectWeek(): Promise<{ award: boolean; amount: number; weekKey: string | null; blockingDay: string | null }>
+    stats(): Promise<{ today: number; series: Array<{ date: string; amount: number }>; perLabel: Array<{ labelId: string | null; labelName: string; amount: number }> }>
+    balance(): Promise<number>
+    listTransactions(): Promise<CoinTransaction[]>
   }
   window: {
     minimize(): void
