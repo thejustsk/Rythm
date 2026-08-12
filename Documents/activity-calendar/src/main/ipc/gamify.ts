@@ -308,6 +308,68 @@ export function registerGamifyHandlers(db: Db): void {
     return { today: net(today), series, perLabel }
   })
 
+  // ---- milestones ----
+  const rowToMilestone = (r: any) => ({
+    id: r.id,
+    name: r.name,
+    icon: r.icon,
+    cost: r.cost,
+    notes: r.notes,
+    achievedAt: r.achieved_at,
+    createdAt: r.created_at
+  })
+
+  ipcMain.handle('milestones:list', () => {
+    return db.prepare('SELECT * FROM reward_milestones ORDER BY cost').all().map(rowToMilestone)
+  })
+
+  ipcMain.handle('milestones:create', (_e, name: string, icon: string, cost: number, notes: string) => {
+    const id = crypto.randomUUID()
+    db.prepare(
+      `INSERT INTO reward_milestones (id, name, icon, cost, notes, achieved_at, created_at)
+       VALUES (?, ?, ?, ?, ?, NULL, ?)`
+    ).run(id, name, icon || '🎯', cost, notes, new Date().toISOString())
+    return rowToMilestone(db.prepare('SELECT * FROM reward_milestones WHERE id = ?').get(id))
+  })
+
+  ipcMain.handle('milestones:update', (_e, id: string, patch: { name?: string; icon?: string; cost?: number; notes?: string }) => {
+    const existing = db.prepare('SELECT * FROM reward_milestones WHERE id = ?').get(id) as any
+    if (!existing) throw new Error('Milestone not found')
+    db.prepare('UPDATE reward_milestones SET name = ?, icon = ?, cost = ?, notes = ? WHERE id = ?').run(
+      patch.name ?? existing.name,
+      patch.icon ?? existing.icon,
+      patch.cost ?? existing.cost,
+      patch.notes ?? existing.notes,
+      id
+    )
+    return rowToMilestone(db.prepare('SELECT * FROM reward_milestones WHERE id = ?').get(id))
+  })
+
+  ipcMain.handle('milestones:remove', (_e, id: string) => {
+    db.prepare('DELETE FROM reward_milestones WHERE id = ?').run(id)
+  })
+
+  /** Claim a milestone: spend the cost (derived from the ledger), mark achieved. */
+  ipcMain.handle('milestones:claim', (_e, id: string) => {
+    const m = db.prepare('SELECT * FROM reward_milestones WHERE id = ?').get(id) as any
+    if (!m) return { ok: false, balance: 0 }
+    const bal = db
+      .prepare("SELECT COALESCE(SUM(CASE WHEN type IN ('spend','refund') THEN -amount ELSE amount END), 0) AS b FROM coin_transactions")
+      .get() as { b: number }
+    if (bal.b < m.cost) return { ok: false, balance: bal.b }
+    db.transaction(() => {
+      db.prepare(
+        `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
+         VALUES (?, ?, NULL, NULL, NULL, 'spend', ?, 'Milestone: ' || ?, NULL)`
+      ).run(crypto.randomUUID(), new Date().toISOString(), m.cost, m.name)
+      db.prepare('UPDATE reward_milestones SET achieved_at = ? WHERE id = ?').run(new Date().toISOString(), id)
+    })()
+    const nb = db
+      .prepare("SELECT COALESCE(SUM(CASE WHEN type IN ('spend','refund') THEN -amount ELSE amount END), 0) AS b FROM coin_transactions")
+      .get() as { b: number }
+    return { ok: true, balance: nb }
+  })
+
   ipcMain.handle('coins:balance', () => {
     const r = db
       .prepare("SELECT COALESCE(SUM(CASE WHEN type IN ('spend','refund') THEN -amount ELSE amount END), 0) AS b FROM coin_transactions")

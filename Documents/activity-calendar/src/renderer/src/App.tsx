@@ -10,6 +10,7 @@ import ToastHost from '@/components/ToastHost'
 import ScorePrompt from '@/components/ScorePrompt'
 import { useCoins } from '@/state/coins'
 import { useToasts } from '@/state/toasts'
+import { useMilestones } from '@/state/milestones'
 import MonthView from '@/views/MonthView'
 import WeekView from '@/views/WeekView'
 import DayView from '@/views/DayView'
@@ -21,11 +22,13 @@ export default function App() {
   const load = useData((s) => s.load)
   const loaded = useData((s) => s.loaded)
   const loadCoins = useCoins((s) => s.load)
+  const loadMilestones = useMilestones((s) => s.load)
   const ui = useUi()
 
   useEffect(() => {
     void load()
     void loadCoins()
+    void loadMilestones()
     // daily check-in bonus (once per day)
     window.api.coins.checkIn().then((r) => {
       if (r.award) {

@@ -61,7 +61,7 @@ tests/         Unit tests (Vitest)
 - [ ] M9 — Google Calendar fetch (later)
 - [x] M10.1 — Rhythm Coins core: score prompt ("How did it go?" On time/Late/Off schedule × multipliers), ledger (balance always derived), sidebar 🪙 chip, never-stuck prompt; **coin correctness: scores attach to the FINAL row (override id), re-save updates the override in place (no duplicates, no double earn), idempotent scoring IPC (same key earns once), status→not-done refunds but KEEPS the score (re-done restores coins silently — no prompt, no false toast), delete refunds only LIVE earns (marked refunded — no double refund), undo-delete restores event + real coin amounts**; full M10 design in master-plan §13
 - [x] M10.2 — Streaks & bonuses + Coins view: daily check-in 🔥 (+10, ×2 on 7-day streaks, once/day, startup toast), "all planned done" (+25, once/day), **perfect week (+100, once/week — rest days OK, a day is only missed when you had plans and did nothing; auto-checked at startup and after every done-save so the credit is never missed)**; Coins view (🪙 tab: total balance, **local-date "earned today" (UTC-fix)**, 7-day chart that stretches to the box, earned-by-label, ledger) with animated chrome removal + golden heading; pure engine unit-tested
-- [ ] M10.3 — Milestones & celebration (progress rings, claim flow, confetti)
+- [x] M10.3 — Milestones & celebration: milestone CRUD (name/icon/cost/notes), live progress ring in the sidebar (nearest milestone), Coins-view panel with progress bars + Claim, **confetti celebration overlay** on claim, spend logged to the ledger, achieved state persists; **M10 gamification complete** 🎉
 
 ## What already works today
 

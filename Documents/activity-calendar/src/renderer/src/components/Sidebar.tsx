@@ -9,6 +9,7 @@ import { minutesOnDay } from '@/lib/timegrid'
 import { LABEL_PALETTE, labelColor } from '@/lib/colors'
 import type { Label } from '@shared/types'
 import MiniMonth from './MiniMonth'
+import MilestoneWidget from './MilestoneWidget'
 
 type Glyph = 'none' | 'tick' | 'cross' | 'minus'
 
@@ -369,6 +370,7 @@ export default function Sidebar() {
         <div key={coinBalance} className="coin-chip" title="Total Rhythm Coins (all-time balance)">
           🪙 <b>{fmtCoins(coinBalance)}</b>
         </div>
+        <MilestoneWidget />
       </div>
     </aside>
   )

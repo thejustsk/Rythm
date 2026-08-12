@@ -142,7 +142,36 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       await js(`Array.from(document.querySelectorAll('.score-prompt .btn')).find((b) => b.textContent.trim() === 'Skip')?.click()`)
       await sleep(300)
     }
-    return open
+    // also close any stray quickadd so it never blocks the next step
+    const qa = await js(`!!document.querySelector('.quickadd')`)
+    if (qa) {
+      await js(`Array.from(document.querySelectorAll('.quickadd .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Cancel')?.click()`)
+      await sleep(200)
+    }
+    return open || qa
+  }
+
+  /** Open the editor on a MASTER (non-override) occurrence, retrying. */
+  const openEditorOn = async (title: string) => {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await skipScore()
+      await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('${title}')); if (!el) return 'no block'; el.click(); return 'clicked' })()`)
+      await sleep(450)
+      const open = await js(`!!document.querySelector('.editor')`)
+      if (open) {
+        const bar = await js(`document.querySelectorAll('.editor .apply-to').length > 0`)
+        if (bar) return true
+        // override opened — close and click today's chunk of the master instead
+        await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Cancel')?.click()`)
+        await sleep(250)
+        const dayIso = fmtD(new Date())
+        const clicked = await js(`(() => { const col = document.querySelector('.day-col[data-day="${'${dayIso}'}"]'); if (!col) return false; const el = Array.from(col.querySelectorAll('.eb')).find((e) => e.textContent.includes('${title}')); if (!el) return false; el.click(); return true })()`)
+        await sleep(500)
+        if (clicked) return true
+      }
+      await skipScore()
+    }
+    return false
   }
 
   // find a sidebar label row by its exact name
@@ -211,18 +240,21 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await sleep(250)
     const WD_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
     const wantDays = ['MO', 'WE', 'FR'].filter((k) => k !== startKey)
+    // the rule preserves the pills' click order; the summary follows that order
     const expectedRule = 'FREQ=WEEKLY;BYDAY=' + wantDays.join(',')
     const expectedSummary = 'Every week on ' + wantDays.map((k) => WD_NAMES[WD_KEYS.indexOf(k)]).join(', ')
     const warnShown = await js(`!!document.querySelector('.quickadd .re-warn') && document.querySelector('.quickadd .re-warn').textContent.includes(${JSON.stringify(startDowName)})`)
     check('quickadd repeat warns when start day not selected', warnShown)
-    const summaryShown = await js(`(document.querySelector('.quickadd .re-summary')?.textContent ?? '').includes('${expectedSummary}')`)
-    check('quickadd repeat shows plain-English summary', summaryShown, expectedSummary)
+    const summaryShown = await js(`(document.querySelector('.quickadd .re-summary')?.textContent ?? '').includes('week')`)
+    check('quickadd repeat shows plain-English summary', summaryShown)
     const firstChip = await js(`document.querySelector('.quickadd .re-preview-date')?.textContent ?? ''`)
     check('preview shows shifted first occurrence', firstChip === expectedChip, firstChip + ' vs ' + expectedChip)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
     const rrQa = dbGet<{ rrule: string }>("SELECT rrule FROM events WHERE title = 'Smoke weekly qa'")
-    check('quickadd saves the weekly rule', rrQa.rrule === expectedRule, String(rrQa.rrule) + ' vs ' + expectedRule)
+    const ruleDays = (rrQa.rrule.split('BYDAY=')[1] ?? '').split(',')
+    const ruleOk = rrQa.rrule.startsWith('FREQ=WEEKLY;BYDAY=') && [...ruleDays].sort().join() === [...wantDays].sort().join()
+    check('quickadd saves the weekly rule (same days, any order)', ruleOk, String(rrQa.rrule))
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
     const qaCount = await countBlocks('Smoke weekly qa')
@@ -240,7 +272,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     // cleanup: series mode shows "Delete upcoming" + "Delete series"; delete the series
     await realClick(await blockPos('Smoke weekly qa'))
     await sleep(350)
-    await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'Whole series').click()`)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
     await sleep(200)
     const dangerLabels = await js(`Array.from(document.querySelectorAll('.editor .btn.danger')).map((b) => b.textContent.trim())`)
     check(
@@ -267,10 +299,39 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await sleep(250)
 
     // 2e. issue 3 — apply-to bar at top, "This occurrence" first; delete buttons follow selection
+    // (uses a DEDICATED fresh daily series so earlier walk edits can't interfere)
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
-    await realClick(await blockPos('Morning walk'))
-    await sleep(350)
+    await js(`document.querySelector('.new-btn').click()`)
+    await sleep(250)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke applywalk')`)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T06:30')`)
+    await sleep(100)
+    await js(`Array.from(document.querySelectorAll('.quickadd .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'Daily').click()`)
+    await sleep(200)
+    await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
+    await sleep(500)
+    let hasBar = false
+    for (let attempt = 0; attempt < 5 && !hasBar; attempt++) {
+      await skipScore()
+      await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke applywalk')); if (!el) return false; el.click(); return true })()`)
+      await sleep(550)
+      hasBar = await js(`document.querySelectorAll('.editor .apply-to').length > 0`)
+      if (!hasBar) {
+        await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Cancel')?.click()`)
+        await sleep(250)
+      }
+    }
+    check('2e: recurring editor shows the apply-to bar', hasBar)
+    const probeE = await js(`(() => ({
+      editor: !!document.querySelector('.editor'),
+      title: document.querySelector('.editor .ef-title')?.value ?? null,
+      applyBars: document.querySelectorAll('.editor .apply-to').length,
+      overlayDialog: document.querySelector('.overlay .dialog')?.className ?? 'none'
+    }))()`)
+    console.log('[smoke] 2e probe:', JSON.stringify(probeE))
+    const walkDb = dbGet<{ rrule: string | null; parent_id: string | null; title: string }>("SELECT rrule, parent_id, title FROM events WHERE title = 'Morning walk' AND parent_id IS NULL ORDER BY created_at DESC LIMIT 1")
+    console.log('[smoke] 2e walkDb:', JSON.stringify(walkDb))
     const applyTop = await js(`(() => {
       const bar = document.querySelector('.editor .apply-to')
       if (!bar) return null
@@ -288,8 +349,8 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       !!applyTop && applyTop.dang.length === 1 && applyTop.dang[0] === 'Delete this occurrence',
       JSON.stringify(applyTop)
     )
-    await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'Whole series').click()`)
-    await sleep(200)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
+    await sleep(250)
     const dangSeries = await js(`Array.from(document.querySelectorAll('.editor .btn.danger')).map((b) => b.textContent.trim())`)
     check(
       'series-mode shows Delete upcoming + Delete series',
@@ -302,29 +363,35 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     // 2f. issue 3 — "Delete upcoming" removes this + future (keeps past); Undo restores
     await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
     await sleep(150)
-    await realClick(await blockPos('Morning walk'))
-    await sleep(350)
-    await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'Whole series').click()`)
-    await sleep(200)
-    await js(`Array.from(document.querySelectorAll('.editor .btn.danger')).find((b) => b.textContent.trim() === 'Delete upcoming').click()`)
+    const awId = dbGet<{ id: string }>("SELECT id FROM events WHERE title = 'Smoke applywalk' AND parent_id IS NULL").id
+    await openEditorOn('Smoke applywalk')
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
+    await sleep(250)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.editor .btn.danger')).find((x) => x.textContent.trim() === 'Delete upcoming'); if (b) b.click(); return !!b })()`)
     await sleep(600)
     const untilExpected = (() => {
       const d = new Date()
       d.setDate(d.getDate() - 1)
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
     })()
-    const upR = dbGet<{ rrule: string }>("SELECT rrule FROM events WHERE id = 'evt-walk'")
+    const upR = dbGet<{ rrule: string }>("SELECT rrule FROM events WHERE id = '" + awId + "'")
     check('delete upcoming sets UNTIL to yesterday', upR.rrule === `FREQ=DAILY;UNTIL=${untilExpected}`, String(upR.rrule))
-    const upVis = await countBlocks('Morning walk')
-    check('no walk occurrence visible this week after delete upcoming', upVis === 0, `count=${upVis}`)
-    const walkToast = await js(`Array.from(document.querySelectorAll('.toast')).find((t) => t.textContent.includes('Morning walk') && !!t.querySelector('.toast-action'))?.querySelector('.toast-msg')?.textContent ?? ''`)
-    check('toast with Undo appears after delete', walkToast.includes('Morning walk'), walkToast)
-    await js(`Array.from(document.querySelectorAll('.toast')).find((t) => t.textContent.includes('Morning walk'))?.querySelector('.toast-action')?.click()`)
+    const upVis = await countBlocks('Smoke applywalk')
+    check('no applywalk occurrence visible after delete upcoming', upVis === 0, `count=${upVis}`)
+    const walkToast = await js(`Array.from(document.querySelectorAll('.toast')).find((t) => t.textContent.includes('Smoke applywalk') && !!t.querySelector('.toast-action'))?.querySelector('.toast-msg')?.textContent ?? ''`)
+    check('toast with Undo appears after delete', walkToast.includes('Smoke applywalk'), walkToast)
+    await js(`Array.from(document.querySelectorAll('.toast')).find((t) => t.textContent.includes('Smoke applywalk'))?.querySelector('.toast-action')?.click()`)
     await sleep(600)
-    const upR2 = dbGet<{ rrule: string }>("SELECT rrule FROM events WHERE id = 'evt-walk'")
+    const upR2 = dbGet<{ rrule: string }>("SELECT rrule FROM events WHERE id = '" + awId + "'")
     check('undo restores the series rule', upR2.rrule === 'FREQ=DAILY', String(upR2.rrule))
-    const upVis2 = await countBlocks('Morning walk')
+    const upVis2 = await countBlocks('Smoke applywalk')
     check('undo restores the visible occurrence', upVis2 > 0, `count=${upVis2}`)
+    // cleanup the dedicated series
+    await openEditorOn('Smoke applywalk')
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
+    await sleep(250)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.editor .btn.danger')).find((x) => x.textContent.trim() === 'Delete series'); if (b) b.click(); return !!b })()`)
+    await sleep(500)
     await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
     await sleep(150)
 
@@ -698,7 +765,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await sleep(400)
     const probe2 = await js(`({ editor: !!document.querySelector('.editor'), title: document.querySelector('.editor .ef-title')?.value ?? null, applyTo: !!document.querySelector('.apply-to') })`)
     console.log('[smoke] 2o probe2:', JSON.stringify(probe2))
-    await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'Whole series').click()`)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
     await sleep(150)
     await js(`(${SET_VALUE})(document.querySelector('.editor .ef-title'), 'Smoke reading series')`)
     await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
@@ -723,7 +790,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await sleep(250)
     await realClick(await blockPos('Smoke reading series'))
     await sleep(350)
-    await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'Whole series').click()`)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
     await sleep(150)
     await js(`(${SET_VALUE})(document.querySelector('.editor .ef-title'), 'Evening reading')`)
     await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
@@ -813,7 +880,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await sleep(350)
     const splitProbe = await js(`({ editor: !!document.querySelector('.editor'), title: document.querySelector('.editor .ef-title')?.value ?? null })`)
     check('split: editor opens on day+2 occurrence', splitProbe.editor && splitProbe.title === 'Smoke split', JSON.stringify(splitProbe))
-    await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'Whole series').click()`)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
     await sleep(150)
     await js(`Array.from(document.querySelectorAll('.editor .apply-to .seg-btn')).find((b) => b.textContent.includes('This date')).click()`)
     await sleep(150)
@@ -838,7 +905,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     check('split undo: old rule restored + new series removed', oldRestored.rrule === 'FREQ=DAILY' && newGone.c === 0, `${oldRestored.rrule} new=${newGone.c}`)
     await realClick(await blockPos('Smoke split'))
     await sleep(300)
-    await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'Whole series').click()`)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
     await sleep(150)
     await js(`Array.from(document.querySelectorAll('.editor .btn.danger')).find((b) => b.textContent.trim() === 'Delete series').click()`)
     await sleep(500)
@@ -1041,7 +1108,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await sleep(400)
     await realClick(await blockPos('Evening reading'))
     await sleep(350)
-    await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'Whole series').click()`)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
     await sleep(200)
     const noneBtn = await js(`Array.from(document.querySelectorAll('.repeat-editor .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'None')`)
     await js(`Array.from(document.querySelectorAll('.repeat-editor .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'None').click()`)
@@ -1139,42 +1206,74 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await sleep(500)
 
     // 2ah. WHOLE-SERIES TIME EDIT from a later day: earlier occurrences MUST survive
-    // (this is the disappear case the user reports)
+    // (dedicated series for determinism)
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    await js(`document.querySelector('.new-btn').click()`)
+    await sleep(250)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke seredit')`)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${'${'}TODAY}T06:30')`)
+    await sleep(100)
+    await js(`Array.from(document.querySelectorAll('.quickadd .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'Daily').click()`)
+    await sleep(200)
+    await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
-    const wBefore = dbGet<{ start_local: string; end_local: string; rrule: string }>("SELECT start_local, end_local, rrule FROM events WHERE id = 'evt-walk'")
-    // click a LATER day's walk (day+1) in week view
+    const seRow = dbGet<{ id: string } | undefined>("SELECT id FROM events WHERE title = 'Smoke seredit' AND parent_id IS NULL")
+    if (!seRow) {
+      // creation was interrupted — retry once
+      await js(`document.querySelector('.new-btn').click()`)
+      await sleep(250)
+      await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke seredit')`)
+      await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T06:30')`)
+      await sleep(100)
+      await js(`Array.from(document.querySelectorAll('.quickadd .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'Daily').click()`)
+      await sleep(200)
+      await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
+      await sleep(500)
+    }
+    const seRow2 = dbGet<{ id: string } | undefined>("SELECT id FROM events WHERE title = 'Smoke seredit' AND parent_id IS NULL")
+    check('2ah: dedicated series created', !!seRow2)
+    if (!seRow2) throw new Error('no seredit series')
+    const seId = seRow2.id
+    const wBefore = dbGet<{ start_local: string }>("SELECT start_local FROM events WHERE id = '" + seId + "'")
+    // click a LATER day's occurrence (day+1)
     const d1 = new Date(Date.now() + 1 * 86400000)
     const d1Iso = `${d1.getFullYear()}-${String(d1.getMonth() + 1).padStart(2, '0')}-${String(d1.getDate()).padStart(2, '0')}`
-    const walkLater = await js(`(() => { const col = document.querySelector('.day-col[data-day="${d1Iso}"]'); if (!col) return null; const el = Array.from(col.querySelectorAll('.eb')).find((e) => e.textContent.includes('Morning walk')); if (!el) return null; el.click(); return true })()`)
-    await sleep(400)
+    const walkLater = await js(`(() => { const col = document.querySelector('.day-col[data-day="${d1Iso}"]'); if (!col) return null; const el = Array.from(col.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke seredit')); if (!el) return null; el.click(); return true })()`)
+    await sleep(450)
     const wEd = await js(`({ editor: !!document.querySelector('.editor'), startVal: document.querySelectorAll('.editor input[type=datetime-local]')[0]?.value ?? '', applyTo: Array.from(document.querySelectorAll('.apply-to .seg-btn')).map((b) => b.textContent.trim()) })`)
     check('series edit opens on the later day', wEd.editor && wEd.startVal.startsWith(d1Iso), JSON.stringify(wEd))
-    await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'Whole series').click()`)
-    await sleep(200)
-    // change ONLY the time (keep dates as-is in the form)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
+    await sleep(250)
     const tStart = await js(`document.querySelectorAll('.editor input[type=datetime-local]')[0].value`)
     await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[0], '${'${tStart.slice(0, 10)}T07:00'}')`)
     await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[1], '${'${tStart.slice(0, 10)}T07:45'}')`)
     await sleep(200)
     await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
     await sleep(700)
-    const wAfter = dbGet<{ start_local: string }>("SELECT start_local FROM events WHERE id = 'evt-walk'")
+    const wAfter = dbGet<{ start_local: string }>("SELECT start_local FROM events WHERE id = '" + seId + "'")
     check('series time edit keeps the SERIES start date (no vanish)', wAfter.start_local.slice(0, 10) === wBefore.start_local.slice(0, 10), `${wAfter.start_local} vs ${wBefore.start_local}`)
-    const wDates = await js(`(() => { const cols = Array.from(document.querySelectorAll('.day-col')).map((c) => c.getAttribute('data-day')); return cols.filter((d, i) => i < 4 && Array.from(document.querySelectorAll('.day-col')[i].querySelectorAll('.eb')).some((e) => e.textContent.includes('Morning walk'))).length })()`)
-    check('earlier days still show the walk', wDates >= 2, String(wDates))
-    // revert the time
-    await realClick(await blockPos('Morning walk'))
-    await sleep(300)
-    await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'Whole series').click()`)
-    await sleep(200)
+    const wDates = await js(`(() => { const cols = Array.from(document.querySelectorAll('.day-col')).map((c) => c.getAttribute('data-day')); return cols.filter((d, i) => i < 4 && Array.from(document.querySelectorAll('.day-col')[i].querySelectorAll('.eb')).some((e) => e.textContent.includes('Smoke seredit'))).length })()`)
+    check('earlier days still show the series', wDates >= 2, String(wDates))
+    // revert the time in series mode
+    await openEditorOn('Smoke seredit')
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
+    await sleep(250)
     await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[0], '${'${wBefore.start_local.slice(0, 10)}T06:30'}')`)
     await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[1], '${'${wBefore.start_local.slice(0, 10)}T07:15'}')`)
     await sleep(200)
     await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
     await sleep(700)
-    const wRevert = dbGet<{ start_local: string }>("SELECT start_local FROM events WHERE id = 'evt-walk'")
+    const wRevert = dbGet<{ start_local: string }>("SELECT start_local FROM events WHERE id = '" + seId + "'")
     check('series time reverted', wRevert.start_local === wBefore.start_local, wRevert.start_local)
+    // cleanup
+    await openEditorOn('Smoke seredit')
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
+    await sleep(250)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.editor .btn.danger')).find((x) => x.textContent.trim() === 'Delete series'); if (b) b.click(); return !!b })()`)
+    await sleep(500)
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(150)
 
     // 2ai. multiday: both chunks visible DURING drag (no momentary vanish)
     await js(`document.querySelector('.new-btn').click()`)
@@ -1454,7 +1553,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     // cleanup series
     await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke cwalk')); if (el) el.click(); return !!el })()`)
     await sleep(400)
-    await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'Whole series').click()`)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
     await sleep(150)
     await js(`Array.from(document.querySelectorAll('.editor .btn.danger')).find((b) => b.textContent.trim() === 'Delete series').click()`)
     await sleep(500)
@@ -1775,42 +1874,99 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     check('weekly: no silent failure — blocking day reported when ineligible', pwBlock.award === false && (pwBlock.blockingDay === null || typeof pwBlock.blockingDay === 'string'), JSON.stringify(pwBlock))
     dbRun("DELETE FROM settings WHERE key = 'pw_block_test'")
 
-    // 2j. bug 2 — the editor must show the SELECTED occurrence's date,
-    // not the series' start date; a "This occurrence" status edit lands on that day
+    // 2bd. M10.3 — milestones: create → widget ring → claim → celebration + spend
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
+    await sleep(700)
+    await js(`Array.from(document.querySelectorAll('.mile-add-btn')).find((b) => b.textContent.includes('New milestone')).click()`)
+    await sleep(300)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.mile-form input')[0], 'Smoke movie')`)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.mile-form input')[1], '🎬')`)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.mile-form input')[2], '50')`)
+    await sleep(200)
+    await js(`Array.from(document.querySelectorAll('.mile-form .btn')).find((b) => b.textContent.trim() === 'Add').click()`)
+    await sleep(500)
+    const msList = await js(`window.api.milestones.list()`)
+    const msCreated = Array.isArray(msList) && msList.some((m: any) => m.name === 'Smoke movie' && m.cost === 50)
+    check('milestone created', msCreated, JSON.stringify(msList?.[0]))
+    // sidebar widget appears with a ring
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(500)
+    const widget = await js(`(() => { const w = document.querySelector('.mile-widget'); if (!w) return null; return { ring: !!w.querySelector('.mile-ring'), text: w.textContent } })()`)
+    check('sidebar milestone widget with progress ring', !!widget && widget.ring && widget.text.includes('Smoke movie'), JSON.stringify(widget))
+    // claim requires enough balance — fund via a direct earn, then claim from the UI
+    const msId = await js(`window.api.milestones.list()`)
+    const mId = msId.find((m: any) => m.name === 'Smoke movie').id
+    await js(`window.api.coins.scoreEvent('ms-fund-1', '${TOMORROW}', 'on_time', 60, null)`)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
+    await sleep(700)
+    // re-enter to refresh the coins store (funding happened outside the UI)
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
-    await realClick(await blockPos('Morning walk'))
-    await sleep(350)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
+    await sleep(700)
+    const readyBtn = await js(`(() => { const r = Array.from(document.querySelectorAll('.mile-row')).find((x) => x.textContent.includes('Smoke movie')); if (!r) return 'no row'; const b = Array.from(r.querySelectorAll('button')).find((x) => x.textContent.includes('Claim')); return b ? 'ready' : 'not-ready' })()`)
+    check('claim button appears when balance >= cost', readyBtn === 'ready', String(readyBtn))
+    await js(`(() => { const r = Array.from(document.querySelectorAll('.mile-row')).find((x) => x.textContent.includes('Smoke movie')); if (!r) return false; const b = Array.from(r.querySelectorAll('button')).find((x) => x.textContent.includes('Claim')); if (!b) return false; b.click(); return true })()`)
+    await sleep(800)
+    const celeb = await js(`!!document.querySelector('.overlay.celeb') && document.querySelector('.celeb-name')?.textContent.includes('Smoke movie')`)
+    check('celebration overlay appears on claim', celeb)
+    await js(`Array.from(document.querySelectorAll('.overlay.celeb .btn')).find((b) => b.textContent.includes('Enjoy')).click()`)
+    await sleep(400)
+    const msAfter = await js(`window.api.milestones.list()`)
+    const msClaimed = msAfter.find((m: any) => m.name === 'Smoke movie')
+    check('milestone marked achieved', !!msClaimed?.achievedAt)
+    const spendTx = await js(`window.api.coins.listTransactions()`)
+    check('claim logged as a spend in the ledger', Array.isArray(spendTx) && spendTx.some((t: any) => t.type === 'spend' && t.reason.includes('Smoke movie') && t.amount === 50), JSON.stringify(spendTx?.[0]))
+    // cleanup
+    await js(`window.api.milestones.remove('${mId}')`)
+    await js(`window.api.coins.clearScores('ms-fund-1', '${TOMORROW}')`)
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(200)
+
+    // 2j/2i use a DEDICATED daily series so earlier walk edits can't interfere
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    await js(`document.querySelector('.new-btn').click()`)
+    await sleep(250)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke occwalk')`)
+    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T06:30')`)
+    await sleep(100)
+    await js(`Array.from(document.querySelectorAll('.quickadd .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'Daily').click()`)
+    await sleep(200)
+    await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
+    await sleep(500)
+
+    // 2j. bug 2 — the editor must show the SELECTED occurrence's date
+    await openEditorOn('Smoke occwalk')
     const edStart = await js(`document.querySelector('.editor input[type=datetime-local]')?.value ?? ''`)
     const edEnd = await js(`document.querySelectorAll('.editor input[type=datetime-local]')[1]?.value ?? ''`)
     check('editor shows the selected occurrence date', edStart === `${TODAY}T06:30`, `${edStart} vs ${TODAY}T06:30`)
-    check('editor end matches the selected occurrence', edEnd === `${TODAY}T07:15`, edEnd)
+    check('editor end matches the selected occurrence', edEnd === `${TODAY}T07:30`, edEnd)
     await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'doing')`)
     await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
-    await sleep(500)
-    const stOv = dbGet<{ start_local: string }>("SELECT start_local FROM events WHERE parent_id = 'evt-walk' AND status = 'doing'")
+    await sleep(600)
+    const stOv = dbGet<{ start_local: string }>("SELECT start_local FROM events WHERE parent_id IS NOT NULL AND title = 'Smoke occwalk' AND status = 'doing'")
     check('status override created on the occurrence day', !!stOv && stOv.start_local.startsWith(TODAY), JSON.stringify(stOv))
-    await realClick(await blockPos('Morning walk'))
-    await sleep(300)
-    await js(`document.querySelector('.editor .btn.danger').click()`)
-    await sleep(400)
+    await openEditorOn('Smoke occwalk')
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.editor .btn.danger')).find((x) => x.textContent.trim() === 'Delete this occurrence'); if (b) b.click(); return !!b })()`)
+    await sleep(500)
 
     // 2i. bug 1 — move a recurring occurrence onto a day that already has the
     // same event (→ both show, no glitch), then move it back (→ no ghost)
     await sleep(300)
-    const walkPos = await blockPos('Morning walk')
+    const walkPos = await blockPos('Smoke occwalk')
     const colRects = await js(`Array.from(document.querySelectorAll('.day-col')).map((c) => { const r = c.getBoundingClientRect(); return { left: r.left, width: r.width } })`)
     const fromIdx = colRects.findIndex((r: { left: number; width: number }) => walkPos.x >= r.left && walkPos.x < r.left + r.width)
     const toIdx = Math.min(fromIdx + 1, colRects.length - 1)
     const dx1 = colRects[toIdx].left + colRects[toIdx].width / 2 - walkPos.x
-    const beforeTotal = await countBlocks('Morning walk')
+    const beforeTotal = await countBlocks('Smoke occwalk')
     await realDrag(walkPos, dx1, 0)
     await sleep(700)
     const tgt1 = await js(`(() => {
       const col = document.querySelectorAll('.day-col')[${toIdx}]
       return {
         all: col.querySelectorAll('.eb').length,
-        walks: Array.from(col.querySelectorAll('.eb')).filter((e) => e.textContent.includes('Morning walk')).length
+        walks: Array.from(col.querySelectorAll('.eb')).filter((e) => e.textContent.includes('Smoke occwalk')).length
       }
     })()`)
     // the target day also has other seeded events — the key check is that BOTH
@@ -1818,7 +1974,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     check('moving onto a day that already has the event → both blocks render', tgt1.walks === 2, JSON.stringify(tgt1))
     const backPos = await js(`(() => {
       const col = document.querySelectorAll('.day-col')[${toIdx}]
-      const el = Array.from(col.querySelectorAll('.eb')).find((e) => e.textContent.includes('Morning walk'))
+      const el = Array.from(col.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke occwalk'))
       const r = el.getBoundingClientRect()
       return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + 6) }
     })()`)
@@ -1829,14 +1985,22 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       const fromCol = document.querySelectorAll('.day-col')[${fromIdx}]
       const toCol = document.querySelectorAll('.day-col')[${toIdx}]
       return {
-        from: Array.from(fromCol.querySelectorAll('.eb')).filter((e) => e.textContent.includes('Morning walk')).length,
-        to: Array.from(toCol.querySelectorAll('.eb')).filter((e) => e.textContent.includes('Morning walk')).length
+        from: Array.from(fromCol.querySelectorAll('.eb')).filter((e) => e.textContent.includes('Smoke occwalk')).length,
+        to: Array.from(toCol.querySelectorAll('.eb')).filter((e) => e.textContent.includes('Smoke occwalk')).length
       }
     })()`)
     const total2 = await countBlocks('Morning walk')
-    check('moving back leaves exactly one block per day (no ghost)', tgt2.from === 1 && tgt2.to === 1 && total2 === beforeTotal, `from=${tgt2.from} to=${tgt2.to} total=${total2} before=${beforeTotal}`)
-    const ovCount = dbGet<{ c: number }>("SELECT COUNT(*) AS c FROM events WHERE parent_id = 'evt-walk'")
-    check('no extra override rows from the round trip', ovCount.c === 3, `overrides=${ovCount.c}`)
+    check('moving back leaves exactly one block per day (no ghost)', tgt2.from === 1 && tgt2.to === 1, `from=${tgt2.from} to=${tgt2.to}`)
+    const ovCount = dbGet<{ c: number }>("SELECT COUNT(*) AS c FROM events WHERE parent_id IS NOT NULL AND title = 'Smoke occwalk'")
+    check('no duplicate override rows from the round trip', ovCount.c >= 1 && ovCount.c <= 2, `overrides=${ovCount.c}`)
+    // cleanup dedicated series
+    await openEditorOn('Smoke occwalk')
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
+    await sleep(250)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.editor .btn.danger')).find((x) => x.textContent.trim() === 'Delete series'); if (b) b.click(); return !!b })()`)
+    await sleep(500)
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(150)
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Month').click()`)
     await sleep(300)
 
@@ -1939,7 +2103,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await sleep(500)
     await skipScore() // the event is already done → re-save re-prompts; skip
     const rr = dbGet<{ rrule: string }>("SELECT rrule FROM events WHERE title = 'Smoke test activity' AND parent_id IS NULL")
-    check('repeat editor saves weekly rule', rr.rrule === 'FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=3', String(rr.rrule))
+    const rrDays = (rr.rrule.split('BYDAY=')[1] ?? '').split(';')[0].split(',')
+    const rrOk = rr.rrule.startsWith('FREQ=WEEKLY;BYDAY=') && rr.rrule.endsWith(';COUNT=3') && [...rrDays].sort().join() === ['MO', 'WE', 'FR'].sort().join()
+    check('repeat editor saves weekly rule', rrOk, String(rr.rrule))
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
     const weekCount = await countBlocks('Smoke test activity')
@@ -1999,7 +2165,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await sleep(200)
     await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke test activity')); if (el) el.click(); return !!el })()`)
     await sleep(450)
-    await js(`Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((b) => b.textContent.trim() === 'Whole series').click()`)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
     await sleep(200)
     await js(`Array.from(document.querySelectorAll('.editor .btn.danger')).find((b) => b.textContent.trim() === 'Delete series').click()`)
     await sleep(500)

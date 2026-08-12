@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeAll } from 'vitest'
+import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import Database from 'better-sqlite3'
 import { migrate } from '../src/main/db/schema'
 import { seedIfEmpty } from '../src/main/db/seed'
@@ -44,7 +44,48 @@ describe('schema & seed', () => {
 })
 
 
+
+describe('milestones', () => {
+  afterAll(() => {
+    db.prepare("DELETE FROM reward_milestones WHERE id IN ('m-claim')").run()
+    db.prepare("DELETE FROM coin_transactions WHERE id IN ('fund','spend1')").run()
+  })
+
+  it('create + claim spends the cost and marks achieved', () => {
+    db.prepare(
+      `INSERT INTO reward_milestones (id, name, icon, cost, notes, achieved_at, created_at)
+       VALUES ('m-claim', 'Movie night', '🎬', 50, 'treat', NULL, ?)`
+    ).run(new Date().toISOString())
+    // fund: earn 100
+    db.prepare(
+      `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
+       VALUES ('fund', ?, NULL, NULL, NULL, 'earn', 100, 'Test fund', NULL)`
+    ).run(new Date().toISOString())
+    const bal = db
+      .prepare("SELECT COALESCE(SUM(CASE WHEN type IN ('spend','refund') THEN -amount ELSE amount END), 0) AS b FROM coin_transactions")
+      .get() as { b: number }
+    expect(bal.b).toBe(100)
+    // claim 50
+    db.prepare(
+      `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
+       VALUES ('spend1', ?, NULL, NULL, NULL, 'spend', 50, 'Milestone: Movie night', NULL)`
+    ).run(new Date().toISOString())
+    db.prepare("UPDATE reward_milestones SET achieved_at = ? WHERE id = 'm-claim'").run(new Date().toISOString())
+    const bal2 = db
+      .prepare("SELECT COALESCE(SUM(CASE WHEN type IN ('spend','refund') THEN -amount ELSE amount END), 0) AS b FROM coin_transactions")
+      .get() as { b: number }
+    expect(bal2.b).toBe(50)
+    const m = db.prepare("SELECT * FROM reward_milestones WHERE id = 'm-claim'").get() as any
+    expect(m.achieved_at).toBeTruthy()
+  })
+})
+
 describe('gamification tables', () => {
+  afterAll(() => {
+    db.prepare("DELETE FROM event_scores WHERE event_id IN ('g1','g2')").run()
+    db.prepare("DELETE FROM coin_transactions WHERE id LIKE 'tx%'").run()
+  })
+
   it('scores + earns record and balance derives from the ledger', () => {
     db.prepare(
       `INSERT INTO event_scores (event_id, origin_date, score_type, scored_at) VALUES ('g1', '2026-08-10', 'on_time', ?)`

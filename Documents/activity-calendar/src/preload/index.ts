@@ -41,6 +41,15 @@ const api: Api = {
     balance: (): Promise<number> => ipcRenderer.invoke('coins:balance'),
     listTransactions: (): Promise<CoinTransaction[]> => ipcRenderer.invoke('coins:listTransactions')
   },
+  milestones: {
+    list: () => ipcRenderer.invoke('milestones:list'),
+    create: (name: string, icon: string, cost: number, notes: string) =>
+      ipcRenderer.invoke('milestones:create', name, icon, cost, notes),
+    update: (id: string, patch: { name?: string; icon?: string; cost?: number; notes?: string }) =>
+      ipcRenderer.invoke('milestones:update', id, patch),
+    remove: (id: string) => ipcRenderer.invoke('milestones:remove', id),
+    claim: (id: string) => ipcRenderer.invoke('milestones:claim', id)
+  },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
     toggleMaximize: () => ipcRenderer.send('window:toggle-maximize'),

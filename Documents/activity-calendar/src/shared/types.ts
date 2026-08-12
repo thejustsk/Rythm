@@ -62,6 +62,16 @@ export interface ScoreRow {
   refundedAt: string | null
 }
 
+export interface RewardMilestone {
+  id: string
+  name: string
+  icon: string
+  cost: number
+  notes: string
+  achievedAt: string | null
+  createdAt: string
+}
+
 export interface CoinTransaction {
   id: string
   ts: string
@@ -104,6 +114,13 @@ export interface Api {
     stats(): Promise<{ today: number; series: Array<{ date: string; amount: number }>; perLabel: Array<{ labelId: string | null; labelName: string; amount: number }> }>
     balance(): Promise<number>
     listTransactions(): Promise<CoinTransaction[]>
+  }
+  milestones: {
+    list(): Promise<RewardMilestone[]>
+    create(name: string, icon: string, cost: number, notes: string): Promise<RewardMilestone>
+    update(id: string, patch: { name?: string; icon?: string; cost?: number; notes?: string }): Promise<RewardMilestone>
+    remove(id: string): Promise<void>
+    claim(id: string): Promise<{ ok: boolean; balance: number }>
   }
   window: {
     minimize(): void

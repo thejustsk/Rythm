@@ -1,15 +1,20 @@
 import { useEffect } from 'react'
 import { useCoins } from '@/state/coins'
+import { useMilestones } from '@/state/milestones'
 import { fmtCoins } from '@/lib/gamification'
+import MilestonesPanel from '@/components/MilestonesPanel'
 
 const DAY_LABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 /** Coins screen: balance, today's earnings, 7-day chart, per-label, ledger. */
 export default function CoinsView() {
   const coins = useCoins()
+  const loadMs = useMilestones((s) => s.load)
 
   useEffect(() => {
     void coins.refreshStats()
+    void coins.refresh()
+    void loadMs()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -82,6 +87,8 @@ export default function CoinsView() {
             ))
           )}
         </div>
+
+        <MilestonesPanel />
 
         <div className="ins-panel wide">
           <div className="ins-panel-title">Ledger</div>
