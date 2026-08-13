@@ -4,8 +4,8 @@ import type { CoinTransaction, ScoreRow, ScoreType } from '@shared/types'
 import {
   checkInState, allDoneCheck, weekKey,
   addDaysIso, ALL_DONE_BONUS, PERFECT_WEEK_BONUS, PERFECT_MONTH_BONUS,
-  streakAwardLevel, monthAwardLevel, defaultMilestoneCosts,
-  streakMilestoneLevel, streakMilestoneReward
+  weekLevelsUpTo, monthLevelsUpTo, streakMilestoneLevelsUpTo,
+  defaultMilestoneCosts, streakMilestoneReward
 } from '../gamifyCore'
 import { parseRRule, iterateRule, isoDate } from '../../renderer/src/engine/recurrence'
 
@@ -272,59 +272,58 @@ export function registerGamifyHandlers(db: Db): void {
     if (!coinsEnabled()) return { award: false, amount: 0, weekKey: null, blockingDay: null, streak: 0 }
     const today = todayIso()
     const streak = computeStreak(db)
-const level = streakAwardLevel(streak)
-    if (level === null) return { award: false, amount: 0, weekKey: null, streak }
-    const key = 'streakAward.' + level
-    const done = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key)
-    if (done) return { award: false, amount: 0, weekKey: key, streak }
+    // CATCH-UP: every unclaimed 7-multiple level ≤ streak pays out (7, 14, …)
+    // so a check at a non-multiple streak never loses the award
+    const levels = weekLevelsUpTo(streak).filter((l) => !db.prepare('SELECT 1 FROM settings WHERE key = ?').get('streakAward.' + l))
+    if (levels.length === 0) return { award: false, amount: 0, weekKey: null, streak }
     db.transaction(() => {
-      db.prepare("INSERT INTO settings (key, value) VALUES (?, '1')").run(key)
-      db.prepare(
-        `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
-         VALUES (?, ?, NULL, ?, NULL, 'bonus', ?, 'Perfect week', NULL)`
-      ).run(crypto.randomUUID(), new Date().toISOString(), today, PERFECT_WEEK_BONUS)
+      for (const l of levels) {
+        db.prepare("INSERT INTO settings (key, value) VALUES (?, '1')").run('streakAward.' + l)
+        db.prepare(
+          `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
+           VALUES (?, ?, NULL, ?, NULL, 'bonus', ?, 'Perfect week', NULL)`
+        ).run(crypto.randomUUID(), new Date().toISOString(), today, PERFECT_WEEK_BONUS)
+      }
     })()
-    return { award: true, amount: PERFECT_WEEK_BONUS, weekKey: key, streak }
+    return { award: true, amount: PERFECT_WEEK_BONUS * levels.length, weekKey: 'streakAward.' + levels[levels.length - 1], streak }
   })
 
-  /** Perfect month: 30-day streak (30, 60, …) → +300 once per level. */
+  /** Perfect month: 30-day streak (30, 60, …) → +300 once per level (catch-up). */
   ipcMain.handle('coins:perfectMonth', () => {
     if (!coinsEnabled()) return { award: false, amount: 0, streak: 0, level: null }
     const today = todayIso()
     const streak = computeStreak(db)
-    const level = monthAwardLevel(streak)
-    if (level === null) return { award: false, amount: 0, streak, level: null }
-    const key = 'monthStreak.' + level
-    const done = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key)
-    if (done) return { award: false, amount: 0, streak, level }
+    const levels = monthLevelsUpTo(streak).filter((l) => !db.prepare('SELECT 1 FROM settings WHERE key = ?').get('monthStreak.' + l))
+    if (levels.length === 0) return { award: false, amount: 0, streak, level: null }
     db.transaction(() => {
-      db.prepare("INSERT INTO settings (key, value) VALUES (?, '1')").run(key)
-      db.prepare(
-        `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
-         VALUES (?, ?, NULL, ?, NULL, 'bonus', ?, 'Perfect month', NULL)`
-      ).run(crypto.randomUUID(), new Date().toISOString(), today, PERFECT_MONTH_BONUS)
+      for (const l of levels) {
+        db.prepare("INSERT INTO settings (key, value) VALUES (?, '1')").run('monthStreak.' + l)
+        db.prepare(
+          `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
+           VALUES (?, ?, NULL, ?, NULL, 'bonus', ?, 'Perfect month', NULL)`
+        ).run(crypto.randomUUID(), new Date().toISOString(), today, PERFECT_MONTH_BONUS)
+      }
     })()
-    return { award: true, amount: PERFECT_MONTH_BONUS, streak, level }
+    return { award: true, amount: PERFECT_MONTH_BONUS * levels.length, streak, level: levels[levels.length - 1] }
   })
 
-  /** Streak milestone: when the streak reaches 5/10/20/… award value × 2 coins (once per level). */
+  /** Streak milestone: 5/10/20/… → value × 2 coins, once per level (catch-up:
+   *  every unclaimed milestone ≤ streak pays out). */
   ipcMain.handle('coins:streakMilestone', () => {
     if (!coinsEnabled()) return { award: false, amount: 0, streak: 0, level: null }
     const streak = computeStreak(db)
-    const level = streakMilestoneLevel(streak)
-    if (level === null) return { award: false, amount: 0, streak, level: null }
-    const key = 'streakMs.' + level
-    const done = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key)
-    if (done) return { award: false, amount: 0, streak, level }
-    const amount = streakMilestoneReward(level)
+    const levels = streakMilestoneLevelsUpTo(streak).filter((l) => !db.prepare('SELECT 1 FROM settings WHERE key = ?').get('streakMs.' + l))
+    if (levels.length === 0) return { award: false, amount: 0, streak, level: null }
     db.transaction(() => {
-      db.prepare("INSERT INTO settings (key, value) VALUES (?, '1')").run(key)
-      db.prepare(
-        `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
-         VALUES (?, ?, NULL, ?, NULL, 'bonus', ?, 'Streak milestone', NULL)`
-      ).run(crypto.randomUUID(), new Date().toISOString(), todayIso(), amount)
+      for (const l of levels) {
+        db.prepare("INSERT INTO settings (key, value) VALUES (?, '1')").run('streakMs.' + l)
+        db.prepare(
+          `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
+           VALUES (?, ?, NULL, ?, NULL, 'bonus', ?, 'Streak milestone', NULL)`
+        ).run(crypto.randomUUID(), new Date().toISOString(), todayIso(), streakMilestoneReward(l))
+      }
     })()
-    return { award: true, amount, streak, level }
+    return { award: true, amount: levels.reduce((s, l) => s + streakMilestoneReward(l), 0), streak, level: levels[levels.length - 1] }
   })
 
   /** Stats for the Coins view: today net, 7-day series, per-label earnings.

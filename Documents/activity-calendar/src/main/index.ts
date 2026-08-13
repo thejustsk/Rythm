@@ -61,6 +61,12 @@ function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
   // Self-test hook: capture a screenshot (and optionally a DOM dump) then quit.
   if (process.env.AC_SCREENSHOT || process.env.AC_SMOKE) {
     win.webContents.once('did-finish-load', () => {
+      // FX harness: fire the score-fx so a screenshot can capture it mid-flight
+      if (process.env.AC_FX) {
+        setTimeout(() => {
+          win.webContents.executeJavaScript('window.__rhythmCoins2.fireScoreFx()').catch(() => {})
+        }, 600)
+      }
       setTimeout(async () => {
         try {
           const fs = await import('node:fs')

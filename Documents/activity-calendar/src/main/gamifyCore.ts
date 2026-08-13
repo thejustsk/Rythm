@@ -101,6 +101,30 @@ export function monthAwardLevel(streak: number): number | null {
   return streak > 0 && streak % 30 === 0 ? streak : null
 }
 
+/** PERFECT WEEK catch-up: every 7-multiple level <= streak (7, 14, 21, …).
+ *  Awards must not be missed when a check happens at a non-multiple streak
+ *  (e.g. a jump 6 -> 8 skips the exact-7 check) — each unclaimed level pays
+ *  out whenever a check finally runs. */
+export function weekLevelsUpTo(streak: number): number[] {
+  const out: number[] = []
+  for (let l = 7; l <= streak; l += 7) out.push(l)
+  return out
+}
+
+/** PERFECT MONTH catch-up: every 30-multiple level <= streak (30, 60, …). */
+export function monthLevelsUpTo(streak: number): number[] {
+  const out: number[] = []
+  for (let l = 30; l <= streak; l += 30) out.push(l)
+  return out
+}
+
+/** STREAK-MILESTONE catch-up: every milestone cost <= streak (5, 10, 20, …),
+ *  so a jump that skips a lower milestone still pays it out. */
+export function streakMilestoneLevelsUpTo(streak: number): number[] {
+  const costs = defaultStreakCosts(80)
+  return costs.filter((c) => c <= streak)
+}
+
 /** Streak-milestone path: 5, 10, 20, 30, 50, 75, then +25 forever. */
 export function defaultStreakCosts(count: number): number[] {
   const base = [5, 10, 20, 30, 50, 75]

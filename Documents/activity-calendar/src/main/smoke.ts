@@ -1929,7 +1929,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     const promptDuringIntro = await js(`!!document.querySelector('.coin-drop') && !document.querySelector('.reward-batch')`)
     check('reward prompt does NOT appear during the intro', promptDuringIntro)
     const introVer = await js(`document.querySelector('.intro-word-ver')?.textContent ?? ''`)
-    check('intro shows version tag (build identification)', introVer.includes('v1.8.0'), introVer)
+    check('intro shows version tag (build identification)', introVer.includes('v1.8.2'), introVer)
     const noSideVer = await js(`!document.querySelector('.sidebar-version')`)
     check('no version tag in the sidebar', noSideVer)
     const flipAnim = await js(`(() => {
@@ -2413,11 +2413,11 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     }
     const smBase = await js(`window.api.coins.balance()`)
     const sm1 = await js(`window.api.coins.streakMilestone()`)
-    check('stage2: 10-day streak milestone awards 20 (10×2)', sm1.award && sm1.amount === 20 && sm1.level === 10, JSON.stringify(sm1))
+    check('stage2: 10-day streak milestone awards ALL unclaimed levels (5×2 + 10×2 = 30, catch-up)', sm1.award && sm1.amount === 30 && sm1.level === 10, JSON.stringify(sm1))
     const sm2 = await js(`window.api.coins.streakMilestone()`)
     check('stage2: milestone awarded only once per level', !sm2.award, JSON.stringify(sm2))
     const smBal = await js(`window.api.coins.balance()`)
-    check('stage2: balance includes exactly +20', Math.round((smBal - smBase) * 100) / 100 === 20, `${smBase} → ${smBal}`)
+    check('stage2: balance includes exactly +30 (catch-up 5+10)', Math.round((smBal - smBase) * 100) / 100 === 30, `${smBase} → ${smBal}`)
     // 4-stone window reflects the streak (hit 10 → window 5,10,20,30 with 10 second)
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
     await js(`(() => { const d = document.querySelector('.coin-drop'); if (d) d.click() })()`)
@@ -2953,6 +2953,24 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     check('perfect week: only once per streak level', !pw1.award, JSON.stringify(pw1))
     const wBal = await js(`window.api.coins.balance()`)
     check('perfect week: balance includes exactly +100', Math.round((wBal - wBase) * 100) / 100 === 100, `${wBase} → ${wBal}`)
+    // CATCH-UP: a check at a NON-multiple streak must not lose awards —
+    // streak 15 pays BOTH level 7 AND level 14 (+200) in one call
+    dbRun("DELETE FROM events")
+    dbRun("DELETE FROM settings WHERE key LIKE 'streakAward.%'")
+    for (let i = 0; i < 15; i++) {
+      const d = new Date(Date.now() - i * 86400000)
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      dbRun(
+        `INSERT INTO events (id, title, description, start_local, end_local, all_day, label_id, color_override, status, rrule, exdates, parent_id, origin_date, completed_at, created_at, updated_at)
+         VALUES (?, 'PW15', '', ?, ?, 0, NULL, NULL, 'done', NULL, '[]', NULL, NULL, ?, ?, ?)`,
+        'pw15-' + i, iso + 'T09:00', iso + 'T10:00', new Date().toISOString(), new Date().toISOString(), new Date().toISOString()
+      )
+    }
+    const pwCatch = await js(`window.api.coins.perfectWeek()`)
+    check('perfect week CATCH-UP: streak 15 pays 7 AND 14 (+200)', pwCatch.award && pwCatch.amount === 200, JSON.stringify(pwCatch))
+    const pwCatch2 = await js(`window.api.coins.perfectWeek()`)
+    check('perfect week CATCH-UP: no repeat after catch-up', !pwCatch2.award, JSON.stringify(pwCatch2))
+    dbRun("DELETE FROM events WHERE title LIKE 'PW15%'")
     const pwTx = await js(`window.api.coins.listTransactions()`)
     check('perfect week: bonus row in ledger', Array.isArray(pwTx) && pwTx.some((t: any) => t.reason === 'Perfect week' && t.type === 'bonus' && t.amount === 100), JSON.stringify(pwTx?.[0]))
     // streak card in the right panel shows the current streak (re-enter to reload)

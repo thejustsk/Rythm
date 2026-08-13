@@ -865,7 +865,7 @@
 .fx-coin .c3-spin {
   animation: gentleFlip 3.4s ease-in-out infinite;
 }
-/* gold dust + sparkles burst around the coin */
+/* gold dust + star sparkles + ring pulse around the coin */
 .fx-dust {
   position: absolute;
   left: 50%;
@@ -873,29 +873,50 @@
 }
 .fx-dust span {
   position: absolute;
-  width: 8px;
-  height: 8px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
-  background: radial-gradient(circle, #ffe066, #ff9f0a);
-  box-shadow: 0 0 8px rgba(255, 190, 60, 0.95);
-  animation: fxDust 1.3s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+  background: radial-gradient(circle at 35% 30%, #fff3b0 0%, #ffd34d 45%, #ff9f0a 100%);
+  box-shadow: 0 0 10px rgba(255, 190, 60, 0.95), 0 0 22px rgba(255, 160, 30, 0.5);
+  animation: fxDust 1.4s cubic-bezier(0.18, 0.8, 0.3, 1) forwards;
   opacity: 0;
 }
+/* four-point star sparkle */
 .fx-dust .spark {
-  width: 5px;
-  height: 5px;
-  background: #fff7d6;
-  box-shadow: 0 0 10px rgba(255, 230, 150, 1);
-  animation: fxSpark 1.1s ease-out forwards;
+  width: 14px;
+  height: 14px;
+  border-radius: 0;
+  background: radial-gradient(circle, #fffbe8 0%, #ffe27a 55%, rgba(255, 210, 90, 0) 75%);
+  box-shadow: 0 0 14px rgba(255, 235, 160, 0.95);
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  animation: fxSpark 1.15s ease-out forwards;
 }
 @keyframes fxDust {
   0% { transform: translate(0, 0) scale(1); opacity: 1; }
-  100% { transform: translate(var(--dx), var(--dy)) scale(0.2); opacity: 0; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(0.15); opacity: 0; }
 }
 @keyframes fxSpark {
-  0% { transform: translate(0, 0) scale(0.4) rotate(0deg); opacity: 0; }
-  30% { opacity: 1; }
-  100% { transform: translate(var(--dx), var(--dy)) scale(1.4) rotate(120deg); opacity: 0; }
+  0% { transform: translate(0, 0) scale(0.3) rotate(0deg); opacity: 0; }
+  25% { opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(1.5) rotate(150deg); opacity: 0; }
+}
+/* golden ring pulse out of the coin */
+.fx-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 60px;
+  height: 60px;
+  margin: -30px 0 0 -30px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 205, 70, 0.9);
+  box-shadow: 0 0 18px rgba(255, 190, 50, 0.6), inset 0 0 12px rgba(255, 190, 50, 0.4);
+  animation: fxRing 0.9s cubic-bezier(0.18, 0.75, 0.35, 1) both;
+  pointer-events: none;
+}
+@keyframes fxRing {
+  0% { transform: scale(0.6); opacity: 0.95; }
+  100% { transform: scale(2.6); opacity: 0; }
 }
 @keyframes fxPop {
   0% { transform: scale(0.4) translateY(10px); opacity: 0; }

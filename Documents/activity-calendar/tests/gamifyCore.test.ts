@@ -3,6 +3,7 @@ import {
   checkInState, allDoneCheck, perfectWeekCheck, weekKey, addDaysIso,
   CHECKIN_BASE, ALL_DONE_BONUS, PERFECT_WEEK_BONUS,
   defaultMilestoneCosts, streakAwardLevel, monthAwardLevel,
+  weekLevelsUpTo, monthLevelsUpTo, streakMilestoneLevelsUpTo,
   defaultStreakCosts, streakMilestoneLevel, streakMilestoneReward, streakWindow
 } from '../src/main/gamifyCore'
 
@@ -156,5 +157,26 @@ describe('helpers', () => {
     expect(monthAwardLevel(29)).toBeNull()
     expect(monthAwardLevel(30)).toBe(30)
     expect(monthAwardLevel(60)).toBe(60)
+  })
+  it('CATCH-UP: weekLevelsUpTo awards every 7-multiple ≤ streak', () => {
+    expect(weekLevelsUpTo(0)).toEqual([])
+    expect(weekLevelsUpTo(6)).toEqual([])
+    expect(weekLevelsUpTo(7)).toEqual([7])
+    expect(weekLevelsUpTo(8)).toEqual([7]) // a 6→8 jump still pays level 7
+    expect(weekLevelsUpTo(15)).toEqual([7, 14])
+    expect(weekLevelsUpTo(30)).toEqual([7, 14, 21, 28])
+  })
+  it('CATCH-UP: monthLevelsUpTo awards every 30-multiple ≤ streak', () => {
+    expect(monthLevelsUpTo(29)).toEqual([])
+    expect(monthLevelsUpTo(30)).toEqual([30])
+    expect(monthLevelsUpTo(31)).toEqual([30])
+    expect(monthLevelsUpTo(60)).toEqual([30, 60])
+  })
+  it('CATCH-UP: streakMilestoneLevelsUpTo awards every milestone ≤ streak', () => {
+    expect(streakMilestoneLevelsUpTo(4)).toEqual([])
+    expect(streakMilestoneLevelsUpTo(5)).toEqual([5])
+    expect(streakMilestoneLevelsUpTo(9)).toEqual([5])
+    expect(streakMilestoneLevelsUpTo(12)).toEqual([5, 10])
+    expect(streakMilestoneLevelsUpTo(55)).toEqual([5, 10, 20, 30, 50])
   })
 })
