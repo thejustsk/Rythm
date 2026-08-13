@@ -3,8 +3,8 @@ import type { Db } from '../db/connection'
 import type { CoinTransaction, ScoreRow, ScoreType } from '@shared/types'
 import {
   checkInState, allDoneCheck, weekKey,
-  addDaysIso, ALL_DONE_BONUS, PERFECT_WEEK_BONUS, PERFECT_MONTH_BONUS,
-  weekLevelsUpTo, monthLevelsUpTo, streakMilestoneLevelsUpTo,
+  addDaysIso, isoD, ALL_DONE_BONUS, PERFECT_WEEK_BONUS, PERFECT_MONTH_BONUS,
+  perfectWeekCheck, perfectMonthCheck, streakMilestoneLevelsUpTo,
   defaultMilestoneCosts, streakMilestoneReward
 } from '../gamifyCore'
 import { parseRRule, iterateRule, isoDate } from '../../renderer/src/engine/recurrence'
@@ -61,7 +61,10 @@ function computeStreak(db: Db): number {
       streak++
       continue
     }
-    if (hasEvents) break
+    // TODAY is a grace day: pending plans (not yet done) must NOT break the
+    // streak — the day isn't over. Only a PAST day with plans and nothing
+    // done breaks it. Days with no events are rest days (streak continues).
+    if (hasEvents && i > 0) break
   }
   return streak
 }
@@ -268,43 +271,81 @@ export function registerGamifyHandlers(db: Db): void {
    * with no events is skipped (streak continues, not counted); a day WITH
    * events but none done breaks the streak.
    */
+  /** PERFECT WEEK (new logic): a completed Monday–Sunday week where every day
+   *  with events is fully 'done' (rest days fine) and the week has ≥1 planned
+   *  day. Each such week pays +100 once (key = the Monday). Weeks are scanned
+   *  back from the most recent COMPLETED week (a week still in progress is
+   *  never evaluated). */
   ipcMain.handle('coins:perfectWeek', () => {
-    if (!coinsEnabled()) return { award: false, amount: 0, weekKey: null, blockingDay: null, streak: 0 }
+    if (!coinsEnabled()) return { award: false, amount: 0, weekKey: null, streak: computeStreak(db) }
     const today = todayIso()
-    const streak = computeStreak(db)
-    // CATCH-UP: every unclaimed 7-multiple level ≤ streak pays out (7, 14, …)
-    // so a check at a non-multiple streak never loses the award
-    const levels = weekLevelsUpTo(streak).filter((l) => !db.prepare('SELECT 1 FROM settings WHERE key = ?').get('streakAward.' + l))
-    if (levels.length === 0) return { award: false, amount: 0, weekKey: null, streak }
-    db.transaction(() => {
-      for (const l of levels) {
-        db.prepare("INSERT INTO settings (key, value) VALUES (?, '1')").run('streakAward.' + l)
+    const monOfToday = weekKey(today)
+    const awarded: string[] = []
+    let amount = 0
+    for (let w = 0; w < 16; w++) {
+      const mon = addDaysIso(monOfToday, -7 * w)
+      const sun = addDaysIso(mon, 6)
+      if (sun > today) continue // week not complete yet
+      const days = [0, 1, 2, 3, 4, 5, 6].map((i) => {
+        const iso = addDaysIso(mon, i)
+        const occs = occurrencesOn(db, iso)
+        return { planned: occs.length, done: occs.filter((o) => o.status === 'done').length }
+      })
+      if (!perfectWeekCheck(days)) continue
+      const key = 'streakAward.' + mon
+      if (db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key)) continue
+      db.transaction(() => {
+        db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, '1')").run(key)
         db.prepare(
           `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
            VALUES (?, ?, NULL, ?, NULL, 'bonus', ?, 'Perfect week', NULL)`
-        ).run(crypto.randomUUID(), new Date().toISOString(), today, PERFECT_WEEK_BONUS)
-      }
-    })()
-    return { award: true, amount: PERFECT_WEEK_BONUS * levels.length, weekKey: 'streakAward.' + levels[levels.length - 1], streak }
+        ).run(crypto.randomUUID(), new Date().toISOString(), mon, PERFECT_WEEK_BONUS)
+      })()
+      awarded.push(mon)
+      amount += PERFECT_WEEK_BONUS
+    }
+    return { award: awarded.length > 0, amount, weekKey: awarded[0] ?? null, streak: computeStreak(db) }
   })
 
-  /** Perfect month: 30-day streak (30, 60, …) → +300 once per level (catch-up). */
+  /** PERFECT MONTH (new logic): every day of a completed month lies in a
+   *  perfect week (all overlapping Mon–Sun weeks perfect, boundary weeks as
+   *  whole weeks). Each such month pays +300 once (key = the 1st). */
   ipcMain.handle('coins:perfectMonth', () => {
-    if (!coinsEnabled()) return { award: false, amount: 0, streak: 0, level: null }
+    if (!coinsEnabled()) return { award: false, amount: 0, streak: computeStreak(db), level: null }
     const today = todayIso()
-    const streak = computeStreak(db)
-    const levels = monthLevelsUpTo(streak).filter((l) => !db.prepare('SELECT 1 FROM settings WHERE key = ?').get('monthStreak.' + l))
-    if (levels.length === 0) return { award: false, amount: 0, streak, level: null }
-    db.transaction(() => {
-      for (const l of levels) {
-        db.prepare("INSERT INTO settings (key, value) VALUES (?, '1')").run('monthStreak.' + l)
+    const weekDays = (mon: string) =>
+      [0, 1, 2, 3, 4, 5, 6].map((i) => {
+        const iso = addDaysIso(mon, i)
+        const occs = occurrencesOn(db, iso)
+        return { planned: occs.length, done: occs.filter((o) => o.status === 'done').length }
+      })
+    const awarded: string[] = []
+    let amount = 0
+    for (let m = 0; m < 6; m++) {
+      const first = new Date(today + 'T00:00:00')
+      first.setDate(1)
+      first.setMonth(first.getMonth() - m)
+      const start = isoD(first)
+      const last = new Date(first.getFullYear(), first.getMonth() + 1, 0)
+      const end = isoD(last)
+      if (end >= today) continue // month not complete yet
+      // all overlapping weeks must be COMPLETE too (a boundary week extending
+      // into the next month isn't judged until it ends)
+      if (addDaysIso(weekKey(end), 6) > today) continue
+      if (!perfectMonthCheck(start, end, weekDays)) continue
+      const key = 'monthStreak.' + start
+      if (db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key)) continue
+      db.transaction(() => {
+        db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, '1')").run(key)
         db.prepare(
           `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
            VALUES (?, ?, NULL, ?, NULL, 'bonus', ?, 'Perfect month', NULL)`
-        ).run(crypto.randomUUID(), new Date().toISOString(), today, PERFECT_MONTH_BONUS)
-      }
-    })()
-    return { award: true, amount: PERFECT_MONTH_BONUS * levels.length, streak, level: levels[levels.length - 1] }
+        ).run(crypto.randomUUID(), new Date().toISOString(), start, PERFECT_MONTH_BONUS)
+      })()
+      awarded.push(start)
+      amount += PERFECT_MONTH_BONUS
+    }
+    return { award: awarded.length > 0, amount, streak: computeStreak(db), level: awarded[0] ?? null }
   })
 
   /** Streak milestone: 5/10/20/… → value × 2 coins, once per level (catch-up:
@@ -316,7 +357,7 @@ export function registerGamifyHandlers(db: Db): void {
     if (levels.length === 0) return { award: false, amount: 0, streak, level: null }
     db.transaction(() => {
       for (const l of levels) {
-        db.prepare("INSERT INTO settings (key, value) VALUES (?, '1')").run('streakMs.' + l)
+        db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, '1')").run('streakMs.' + l)
         db.prepare(
           `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
            VALUES (?, ?, NULL, ?, NULL, 'bonus', ?, 'Streak milestone', NULL)`

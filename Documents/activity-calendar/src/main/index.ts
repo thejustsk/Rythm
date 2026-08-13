@@ -108,6 +108,16 @@ function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
                     text: m ? m.textContent : null
                   }
                 })(),
+                streakCal: (() => {
+                  return {
+                    rows: Array.from(document.querySelectorAll('.streak-row')).map((r) => ({
+                      cls: r.className,
+                      done: Array.from(r.querySelectorAll('.streak-day.done')).length,
+                      none: Array.from(r.querySelectorAll('.streak-day.none')).length
+                    })),
+                    perfectM: document.querySelectorAll('.streak-day.perfect-m').length
+                  }
+                })(),
                 coin3d: (() => {
                   const coin = document.querySelector('.premium-heading .ph-icon .rhythm-coin')
                   if (!coin) return null

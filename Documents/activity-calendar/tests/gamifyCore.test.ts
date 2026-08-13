@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   checkInState, allDoneCheck, perfectWeekCheck, weekKey, addDaysIso,
   CHECKIN_BASE, ALL_DONE_BONUS, PERFECT_WEEK_BONUS,
-  defaultMilestoneCosts, streakAwardLevel, monthAwardLevel,
-  weekLevelsUpTo, monthLevelsUpTo, streakMilestoneLevelsUpTo,
+  defaultMilestoneCosts, perfectWeekCheck, perfectMonthCheck, dayResolved,
+  weekKey, monthKey, streakMilestoneLevelsUpTo,
   defaultStreakCosts, streakMilestoneLevel, streakMilestoneReward, streakWindow
 } from '../src/main/gamifyCore'
 
@@ -44,38 +44,56 @@ describe('allDoneCheck', () => {
   })
 })
 
-describe('perfectWeekCheck', () => {
-  it('requires 7 days, each active-or-rest', () => {
-    const good = Array.from({ length: 7 }, () => ({ hasDone: true, hasMissed: false, planned: 2 }))
-    expect(perfectWeekCheck(good)).toBe(true)
-    // leftover todos on an otherwise active day do NOT block the week
-    const withLeftovers = [...good.slice(0, 6), { hasDone: true, hasMissed: true, planned: 2 }]
-    expect(perfectWeekCheck(withLeftovers)).toBe(true)
-    expect(perfectWeekCheck(good.slice(0, 6))).toBe(false)
+describe('perfectWeekCheck (cup 5: every planned day fully done, ≥1 planned day)', () => {
+  const full = (planned: number, done: number) => ({ planned, done })
+  const goodWeek = [
+    full(2, 2), full(1, 1), full(3, 3), full(0, 0), full(1, 1), full(2, 2), full(4, 4)
+  ]
+  it('a week with every planned day fully done is perfect', () => {
+    expect(perfectWeekCheck(goodWeek)).toBe(true)
   })
-  it('REST days (no plans) do NOT break the week — the weekly all-done credit', () => {
-    const withRest = [
-      { hasDone: true, hasMissed: false, planned: 3 },
-      { hasDone: true, hasMissed: false, planned: 2 },
-      { hasDone: false, hasMissed: false, planned: 0 }, // rest day
-      { hasDone: true, hasMissed: false, planned: 1 },
-      { hasDone: true, hasMissed: false, planned: 4 },
-      { hasDone: true, hasMissed: false, planned: 2 },
-      { hasDone: true, hasMissed: false, planned: 2 }
-    ]
+  it('REST days (no plans) do NOT break the week', () => {
+    const withRest = [full(3, 3), full(2, 2), full(0, 0), full(1, 1), full(4, 4), full(2, 2), full(2, 2)]
     expect(perfectWeekCheck(withRest)).toBe(true)
   })
-  it('a day with plans but nothing done still fails', () => {
-    const days = [
-      { hasDone: false, hasMissed: false, planned: 2 },
-      { hasDone: true, hasMissed: false, planned: 1 },
-      { hasDone: true, hasMissed: false, planned: 1 },
-      { hasDone: true, hasMissed: false, planned: 1 },
-      { hasDone: true, hasMissed: false, planned: 1 },
-      { hasDone: true, hasMissed: false, planned: 1 },
-      { hasDone: true, hasMissed: false, planned: 1 }
-    ]
+  it('a NO-PLAN week is NOT perfect', () => {
+    const idle = Array.from({ length: 7 }, () => full(0, 0))
+    expect(perfectWeekCheck(idle)).toBe(false)
+  })
+  it('a day with leftover todo/doing blocks fails (strict — partial credit NOT allowed)', () => {
+    const days = [full(2, 1), full(1, 1), full(1, 1), full(0, 0), full(1, 1), full(1, 1), full(1, 1)]
     expect(perfectWeekCheck(days)).toBe(false)
+  })
+  it('a day with plans but NOTHING done fails', () => {
+    const days = [full(2, 0), full(1, 1), full(1, 1), full(0, 0), full(1, 1), full(1, 1), full(1, 1)]
+    expect(perfectWeekCheck(days)).toBe(false)
+  })
+  it('requires exactly 7 days', () => {
+    expect(perfectWeekCheck(goodWeek.slice(0, 6))).toBe(false)
+  })
+})
+
+describe('perfectMonthCheck (cup 5: every day of the month in a perfect week)', () => {
+  it('a month fully covered by perfect weeks is a perfect month', () => {
+    // June 2026: starts Monday 1, ends Tuesday 30 → weeks Mon1–Sun7, Mon8–Sun14,
+    // Mon15–Sun21, Mon22–Sun28, Mon29–Sun Jul 5 (boundary includes July days)
+    const weekDays = (mon: string) => {
+      const all = [0, 1, 2, 3, 4, 5, 6].map((i) => ({ planned: 1, done: 1 }))
+      // make July 1-5 a rest stretch inside the boundary week — still perfect
+      return all.map((d) => d)
+    }
+    expect(perfectMonthCheck('2026-06-01', '2026-06-30', weekDays)).toBe(true)
+  })
+  it('a month with a non-perfect week fails', () => {
+    const weekDays = (mon: string) => {
+      if (mon === '2026-06-15') return [0, 1, 2, 3, 4, 5, 6].map((i) => ({ planned: 1, done: i === 0 ? 0 : 1 }))
+      return [0, 1, 2, 3, 4, 5, 6].map((i) => ({ planned: 1, done: 1 }))
+    }
+    expect(perfectMonthCheck('2026-06-01', '2026-06-30', weekDays)).toBe(false)
+  })
+  it('a month with NO planned days fails (idle month)', () => {
+    const weekDays = () => [0, 1, 2, 3, 4, 5, 6].map((i) => ({ planned: 0, done: 0 }))
+    expect(perfectMonthCheck('2026-06-01', '2026-06-30', weekDays)).toBe(false)
   })
 })
 
@@ -128,18 +146,17 @@ describe('streak milestones (5,10,20,30,50,75,+25)', () => {
   })
 })
 
-describe('streakAwardLevel (perfect week on 7-multiples)', () => {
-  it('awards only on 7, 14, 21…', () => {
-    expect(streakAwardLevel(0)).toBeNull()
-    expect(streakAwardLevel(6)).toBeNull()
-    expect(streakAwardLevel(7)).toBe(7)
-    expect(streakAwardLevel(8)).toBeNull()
-    expect(streakAwardLevel(14)).toBe(14)
-    expect(streakAwardLevel(21)).toBe(21)
-  })
-})
-
 describe('helpers', () => {
+  it('monthKey returns the first of the month', () => {
+    expect(monthKey('2026-08-13')).toBe('2026-08-01')
+    expect(monthKey('2026-12-31')).toBe('2026-12-01')
+  })
+  it('dayResolved: rest days ok, all-done required otherwise', () => {
+    expect(dayResolved({ planned: 0, done: 0 })).toBe(true)
+    expect(dayResolved({ planned: 3, done: 3 })).toBe(true)
+    expect(dayResolved({ planned: 3, done: 2 })).toBe(false)
+    expect(dayResolved({ planned: 2, done: 0 })).toBe(false)
+  })
   it('addDaysIso crosses month boundaries', () => {
     expect(addDaysIso('2026-08-31', 1)).toBe('2026-09-01')
     expect(addDaysIso('2026-08-11', -1)).toBe('2026-08-10')
@@ -151,26 +168,6 @@ describe('helpers', () => {
   it('bonus constants', () => {
     expect(ALL_DONE_BONUS).toBe(25)
     expect(PERFECT_WEEK_BONUS).toBe(100)
-  })
-  it('monthAwardLevel (perfect month on 30-multiples)', () => {
-    expect(monthAwardLevel(0)).toBeNull()
-    expect(monthAwardLevel(29)).toBeNull()
-    expect(monthAwardLevel(30)).toBe(30)
-    expect(monthAwardLevel(60)).toBe(60)
-  })
-  it('CATCH-UP: weekLevelsUpTo awards every 7-multiple ≤ streak', () => {
-    expect(weekLevelsUpTo(0)).toEqual([])
-    expect(weekLevelsUpTo(6)).toEqual([])
-    expect(weekLevelsUpTo(7)).toEqual([7])
-    expect(weekLevelsUpTo(8)).toEqual([7]) // a 6→8 jump still pays level 7
-    expect(weekLevelsUpTo(15)).toEqual([7, 14])
-    expect(weekLevelsUpTo(30)).toEqual([7, 14, 21, 28])
-  })
-  it('CATCH-UP: monthLevelsUpTo awards every 30-multiple ≤ streak', () => {
-    expect(monthLevelsUpTo(29)).toEqual([])
-    expect(monthLevelsUpTo(30)).toEqual([30])
-    expect(monthLevelsUpTo(31)).toEqual([30])
-    expect(monthLevelsUpTo(60)).toEqual([30, 60])
   })
   it('CATCH-UP: streakMilestoneLevelsUpTo awards every milestone ≤ streak', () => {
     expect(streakMilestoneLevelsUpTo(4)).toEqual([])

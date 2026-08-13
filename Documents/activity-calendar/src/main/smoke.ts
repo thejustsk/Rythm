@@ -1929,7 +1929,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     const promptDuringIntro = await js(`!!document.querySelector('.coin-drop') && !document.querySelector('.reward-batch')`)
     check('reward prompt does NOT appear during the intro', promptDuringIntro)
     const introVer = await js(`document.querySelector('.intro-word-ver')?.textContent ?? ''`)
-    check('intro shows version tag (build identification)', introVer.includes('v1.8.2'), introVer)
+    check('intro shows version tag (build identification)', introVer.includes('v1.9.0'), introVer)
     const noSideVer = await js(`!document.querySelector('.sidebar-version')`)
     check('no version tag in the sidebar', noSideVer)
     const flipAnim = await js(`(() => {
@@ -2088,7 +2088,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
     // blocking-day reporting: put a planned-but-not-done day in the window
-    dbRun("INSERT INTO settings (key, value) VALUES ('pw_block_test', '1')")
+    dbRun("INSERT OR IGNORE INTO settings (key, value) VALUES ('pw_block_test', '1')")
     const pwBlock = await js(`window.api.coins.perfectWeek()`)
     console.log('[smoke] perfectWeek blocking probe:', JSON.stringify(pwBlock))
     check('perfect week: reports streak when ineligible (no silent failure)', pwBlock.award === false && typeof pwBlock.streak === 'number', JSON.stringify(pwBlock))
@@ -2288,7 +2288,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     dbRun("DELETE FROM event_scores")
     dbRun("DELETE FROM settings WHERE key LIKE 'stoneCrossed.%' OR key LIKE 'rewardAsked.%' OR key LIKE 'stoneReached.%'")
     dbRun("UPDATE reward_milestones SET notes = 'Set your reward'")
-    dbRun("INSERT INTO settings (key, value) VALUES ('stoneCrossed.100', '1')") // legacy key, NO rewardAsked
+    dbRun("INSERT OR IGNORE INTO settings (key, value) VALUES ('stoneCrossed.100', '1')") // legacy key, NO rewardAsked
     await js(`window.api.coins.scoreEvent('ms-legacy-1', '${TOMORROW}', 'on_time', 150, null)`)
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
@@ -2431,22 +2431,6 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       return { found: true, text: p.textContent, bg: getComputedStyle(p).backgroundImage }
     })()`)
     check('streak goal: second-last reached mile gets a varied blue shade', hitPrev.found && hitPrev.text.includes('5d') && hitPrev.bg.includes('gradient'), JSON.stringify(hitPrev))
-    // CUP-2: PERFECT MONTH — a 30-day streak awards +300 once per level
-    dbRun("DELETE FROM events WHERE title LIKE 'SM30%'")
-    dbRun("DELETE FROM settings WHERE key LIKE 'monthStreak.%'")
-    for (let i = 0; i < 30; i++) {
-      const d = new Date(Date.now() - i * 86400000)
-      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-      dbRun(
-        `INSERT INTO events (id, title, description, start_local, end_local, all_day, label_id, color_override, status, rrule, exdates, parent_id, origin_date, completed_at, created_at, updated_at)
-         VALUES (?, 'SM30', '', ?, ?, 0, NULL, NULL, 'done', NULL, '[]', NULL, NULL, ?, ?, ?)`,
-        'sm30-' + i, iso + 'T09:00', iso + 'T10:00', new Date().toISOString(), new Date().toISOString(), new Date().toISOString()
-      )
-    }
-    const pm1 = await js(`window.api.coins.perfectMonth()`)
-    const pm2 = await js(`window.api.coins.perfectMonth()`)
-    check('perfect month: 30-day streak awards 300 once', pm1.award && pm1.amount === 300 && pm1.level === 30 && !pm2.award, JSON.stringify(pm1))
-    dbRun("DELETE FROM events WHERE title LIKE 'SM30%'")
     dbRun("DELETE FROM events WHERE title LIKE 'SM10%'")
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
@@ -2493,7 +2477,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     // build — e.g. 'Level 100' names or a stray extra level), every list call
     // repairs the path: exactly Level 1..8 canonical, extras dropped.
     dbRun("DELETE FROM reward_milestones")
-    dbRun("INSERT INTO settings (key, value) VALUES ('milestonePathV2', '1')")
+    dbRun("INSERT OR IGNORE INTO settings (key, value) VALUES ('milestonePathV2', '1')")
     const nowIso3 = new Date().toISOString()
     const legacyRows: Array<[string, string, number]> = [
       ['n1', 'Level 100', 100],
@@ -2519,9 +2503,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     dbRun("DELETE FROM event_scores")
     await js(`window.api.coins.scoreEvent('ms-reach-1', '${TOMORROW}', 'on_time', 150, null)`)
     // suppress the reward popup for this leg (covered by the dedicated batch test)
-    dbRun("INSERT INTO settings (key, value) VALUES ('stoneCrossed.100', '1')")
-    dbRun("INSERT INTO settings (key, value) VALUES ('rewardAsked.100', '1')")
-    dbRun("INSERT INTO settings (key, value) VALUES ('rewardAsked.250', '1')")
+    dbRun("INSERT OR IGNORE INTO settings (key, value) VALUES ('stoneCrossed.100', '1')")
+    dbRun("INSERT OR IGNORE INTO settings (key, value) VALUES ('rewardAsked.100', '1')")
+    dbRun("INSERT OR IGNORE INTO settings (key, value) VALUES ('rewardAsked.250', '1')")
     const probeReach = await js(`(async () => ({ bal: await window.api.coins.balance(), ms: (await window.api.milestones.list()).slice(0, 3) }))()`)
     console.log('[smoke] reach probe:', JSON.stringify(probeReach))
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
@@ -2547,8 +2531,8 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     dbRun("DELETE FROM coin_transactions")
     await js(`window.api.coins.scoreEvent('ms-stick-1', '${TOMORROW}', 'on_time', 500, null)`)
     for (const c of [100, 250, 500, 1000]) {
-      dbRun("INSERT INTO settings (key, value) VALUES ('stoneCrossed.' || ?, '1')", c)
-      dbRun("INSERT INTO settings (key, value) VALUES ('rewardAsked.' || ?, '1')", c)
+      dbRun("INSERT OR IGNORE INTO settings (key, value) VALUES ('stoneCrossed.' || ?, '1')", c)
+      dbRun("INSERT OR IGNORE INTO settings (key, value) VALUES ('rewardAsked.' || ?, '1')", c)
     }
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
@@ -2569,8 +2553,8 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     dbRun("DELETE FROM coin_transactions")
     await js(`window.api.coins.scoreEvent('ms-multi-1', '${TOMORROW}', 'on_time', 1600, null)`)
     for (const c of [100, 250, 500, 1000, 1500, 2500]) {
-      dbRun("INSERT INTO settings (key, value) VALUES ('stoneCrossed.' || ?, '1')", c)
-      dbRun("INSERT INTO settings (key, value) VALUES ('rewardAsked.' || ?, '1')", c)
+      dbRun("INSERT OR IGNORE INTO settings (key, value) VALUES ('stoneCrossed.' || ?, '1')", c)
+      dbRun("INSERT OR IGNORE INTO settings (key, value) VALUES ('rewardAsked.' || ?, '1')", c)
     }
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
@@ -2609,7 +2593,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`(() => { const d = document.querySelector('.coin-drop'); if (d) d.click() })()`)
     await sleep(1200)
     const noteGeo = await js(`(() => {
-      const st = Array.from(document.querySelectorAll('.mile-stone')).find((x) => x.querySelector('.mile-level')?.textContent.includes('100'))
+      const st = Array.from(document.querySelectorAll('.mile-stone')).find((x) => (x.querySelector('.mile-level')?.textContent ?? '').trim().startsWith('100 '))
       if (!st) return { found: false }
       const notes = st.querySelector('.mile-stone-notes')
       const actions = st.querySelector('.mile-stone-actions')
@@ -2817,8 +2801,13 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     check('repeat editor saves weekly rule', rrOk, String(rr.rrule))
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
-    const weekCount = await countBlocks('Smoke test activity')
-    check('weekly rule expands to multiple days', weekCount >= 2, `count=${weekCount}`)
+    // the start day (Thu) is not in MO/WE/FR → the first occurrence is FRIDAY
+    // (this week); the next two (Mon, Wed) land NEXT week — count across both
+    const weekCountNow = await countBlocks('Smoke test activity')
+    await js(`document.querySelector('.icon-btn[title="Next"]')?.click()`)
+    await sleep(400)
+    const weekCountNext = await countBlocks('Smoke test activity')
+    check('weekly rule expands to multiple days (this week + next week)', weekCountNow >= 1 && weekCountNow + weekCountNext >= 2, `now=${weekCountNow} next=${weekCountNext}`)
 
     // 5c. M5 — "edit this occurrence only" creates an override, series stays intact
     // (run in Week view: after a weekly rule the occurrence may not be "today")
@@ -2933,70 +2922,115 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     const pw = await js(`window.api.coins.perfectWeek()`)
     console.log('[smoke] perfectWeek result:', JSON.stringify(pw))
 
-    // 2bb. PERFECT WEEK = streak hitting a multiple of 7 (+100, once per level)
-    dbRun("DELETE FROM events") // disposable smoke DB: wipe for a clean streak
-    dbRun("DELETE FROM settings WHERE key LIKE 'streakAward.%'")
-    const wBase = await js(`window.api.coins.balance()`)
-    // 7 consecutive done days ending today → streak 7 → +100 once
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(Date.now() - i * 86400000)
-      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    // 2bb. PERFECT WEEK (cup 5): a COMPLETED Mon–Sun week where every day with
+    // events is fully 'done' (rest days fine) and the week has >=1 planned day → +100
+    const wkMon = (iso: string) => {
+      const d = new Date(iso + 'T00:00:00')
+      const dow = d.getDay()
+      const m = new Date(d)
+      m.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
+      return fmtD(m)
+    }
+    const addDaysIsoSmoke = (iso: string, n: number) => {
+      const d = new Date(iso + 'T00:00:00')
+      d.setDate(d.getDate() + n)
+      return fmtD(d)
+    }
+    const insEv = (id: string, iso: string, status: string) => {
       dbRun(
         `INSERT INTO events (id, title, description, start_local, end_local, all_day, label_id, color_override, status, rrule, exdates, parent_id, origin_date, completed_at, created_at, updated_at)
-         VALUES (?, 'PW streak', '', ?, ?, 0, NULL, NULL, 'done', NULL, '[]', NULL, NULL, ?, ?, ?)`,
-        'pw-' + i, iso + 'T09:00', iso + 'T10:00', new Date().toISOString(), new Date().toISOString(), new Date().toISOString()
+         VALUES (?, 'PW', '', ?, ?, 0, NULL, NULL, ?, NULL, '[]', NULL, NULL, ?, ?, ?)`,
+        id, iso + 'T09:00', iso + 'T10:00', status, new Date().toISOString(), new Date().toISOString(), new Date().toISOString()
       )
     }
-    const pw0 = await js(`window.api.coins.perfectWeek()`)
-    check('perfect week: +100 credited on 7-day streak', pw0.award && pw0.amount === 100, JSON.stringify(pw0))
-    const pw1 = await js(`window.api.coins.perfectWeek()`)
-    check('perfect week: only once per streak level', !pw1.award, JSON.stringify(pw1))
-    const wBal = await js(`window.api.coins.balance()`)
-    check('perfect week: balance includes exactly +100', Math.round((wBal - wBase) * 100) / 100 === 100, `${wBase} → ${wBal}`)
-    // CATCH-UP: a check at a NON-multiple streak must not lose awards —
-    // streak 15 pays BOTH level 7 AND level 14 (+200) in one call
+    const weekAllDone = (monIso: string, skipDay: number | null) => {
+      for (let i = 0; i < 7; i++) {
+        if (i === skipDay) continue // rest day: no events
+        insEv('pw-' + monIso + '-' + i, addDaysIsoSmoke(monIso, i), 'done')
+      }
+    }
     dbRun("DELETE FROM events")
     dbRun("DELETE FROM settings WHERE key LIKE 'streakAward.%'")
-    for (let i = 0; i < 15; i++) {
-      const d = new Date(Date.now() - i * 86400000)
-      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-      dbRun(
-        `INSERT INTO events (id, title, description, start_local, end_local, all_day, label_id, color_override, status, rrule, exdates, parent_id, origin_date, completed_at, created_at, updated_at)
-         VALUES (?, 'PW15', '', ?, ?, 0, NULL, NULL, 'done', NULL, '[]', NULL, NULL, ?, ?, ?)`,
-        'pw15-' + i, iso + 'T09:00', iso + 'T10:00', new Date().toISOString(), new Date().toISOString(), new Date().toISOString()
-      )
+    const wBase = await js(`window.api.coins.balance()`)
+    const curMon = wkMon(TODAY)
+    const lastMonIso = addDaysIsoSmoke(curMon, -7) // most recent COMPLETED week
+    // Week A: all 7 days done → perfect
+    weekAllDone(lastMonIso, null)
+    const pw0 = await js(`window.api.coins.perfectWeek()`)
+    check('perfect week: completed Mon–Sun all done → +100', pw0.award && pw0.amount === 100, JSON.stringify(pw0))
+    const pw1 = await js(`window.api.coins.perfectWeek()`)
+    check('perfect week: only once per week', !pw1.award, JSON.stringify(pw1))
+    const wBal = await js(`window.api.coins.balance()`)
+    check('perfect week: balance includes exactly +100', Math.round((wBal - wBase) * 100) / 100 === 100, `${wBase} → ${wBal}`)
+    // Week B: a REST day inside (no events that day) → still perfect → +100
+    const twoMon = addDaysIsoSmoke(lastMonIso, -7)
+    weekAllDone(twoMon, 3)
+    const pwRest = await js(`window.api.coins.perfectWeek()`)
+    check('perfect week: rest day inside the week still perfect (+100)', pwRest.award && pwRest.amount === 100, JSON.stringify(pwRest))
+    // NO-PLAN week (no events at all) → NOT a perfect week, no award
+    const noPlanMon = addDaysIsoSmoke(lastMonIso, -14)
+    void noPlanMon // deliberately no events
+    const pwNoPlan = await js(`window.api.coins.perfectWeek()`)
+    check('perfect week: a week with NO plans is NOT perfect', !pwNoPlan.award, JSON.stringify(pwNoPlan))
+    // a COMPLETED week with a leftover TODO day → NOT perfect
+    const pendMon = addDaysIsoSmoke(lastMonIso, -21)
+    for (let i = 0; i < 7; i++) {
+      if (i === 2) insEv('pw-pend-' + i, addDaysIsoSmoke(pendMon, i), 'todo')
+      else insEv('pw-pend-' + i, addDaysIsoSmoke(pendMon, i), 'done')
     }
-    const pwCatch = await js(`window.api.coins.perfectWeek()`)
-    check('perfect week CATCH-UP: streak 15 pays 7 AND 14 (+200)', pwCatch.award && pwCatch.amount === 200, JSON.stringify(pwCatch))
-    const pwCatch2 = await js(`window.api.coins.perfectWeek()`)
-    check('perfect week CATCH-UP: no repeat after catch-up', !pwCatch2.award, JSON.stringify(pwCatch2))
-    dbRun("DELETE FROM events WHERE title LIKE 'PW15%'")
+    const pwPend = await js(`window.api.coins.perfectWeek()`)
+    check('perfect week: a pending day in a completed week → NO award', !pwPend.award, JSON.stringify(pwPend))
+    dbRun("DELETE FROM events WHERE title = 'PW'")
+    // PERFECT MONTH (cup 5): every day of the previous month lies in a perfect
+    // week → +300 (the month's weeks also pay +100 each, by design)
+    const prevFirst = fmtD(new Date(new Date(TODAY + 'T00:00:00').getFullYear(), new Date(TODAY + 'T00:00:00').getMonth() - 1, 1))
+    const prevLast = fmtD(new Date(new Date(TODAY + 'T00:00:00').getFullYear(), new Date(TODAY + 'T00:00:00').getMonth(), 0))
+    dbRun("DELETE FROM settings WHERE key LIKE 'monthStreak.%'")
+    for (let mon = wkMon(prevFirst); mon <= wkMon(prevLast); mon = addDaysIsoSmoke(mon, 7)) {
+      for (let i = 0; i < 7; i++) insEv('pm-' + mon + '-' + i, addDaysIsoSmoke(mon, i), 'done')
+    }
+    const pm1 = await js(`window.api.coins.perfectMonth()`)
+    check('perfect month: previous month fully in perfect weeks → +300', pm1.award && pm1.amount === 300, JSON.stringify(pm1))
+    const pm2 = await js(`window.api.coins.perfectMonth()`)
+    check('perfect month: only once per month', !pm2.award, JSON.stringify(pm2))
+    const pwAfterMonth = await js(`window.api.coins.perfectWeek()`)
+    check('perfect month weeks also credit as perfect weeks', pwAfterMonth.award && pwAfterMonth.amount >= 300, JSON.stringify(pwAfterMonth))
+    dbRun("DELETE FROM events WHERE title = 'PW'")
     const pwTx = await js(`window.api.coins.listTransactions()`)
     check('perfect week: bonus row in ledger', Array.isArray(pwTx) && pwTx.some((t: any) => t.reason === 'Perfect week' && t.type === 'bonus' && t.amount === 100), JSON.stringify(pwTx?.[0]))
-    // streak card in the right panel shows the current streak (re-enter to reload)
-    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
-    await js(`(() => { const d = document.querySelector('.coin-drop'); if (d) d.click() })()`)
-    await sleep(800)
+    // streak-calendar UI (cup 5): craft the previous month as a perfect month
+    // (its weeks are the perfect weeks) and verify the streak calendar shows
+    // golden week-row borders + golden dots on a perfect month's dates
+    dbRun("DELETE FROM events")
+    for (let mon = wkMon(prevFirst); mon <= wkMon(prevLast); mon = addDaysIsoSmoke(mon, 7)) {
+      for (let i = 0; i < 7; i++) insEv('pwui-' + mon + '-' + i, addDaysIsoSmoke(mon, i), 'done')
+    }
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
     await js(`(() => { const d = document.querySelector('.coin-drop'); if (d) d.click() })()`)
-    await sleep(3600)
-    // the streak card flips faces (Current/Best) — poll for a consistent pair
-    const streakPair = await js(`(async () => {
-      for (let i = 0; i < 14; i++) {
-        const card = document.querySelector('.streak-kpi')
-        const label = card?.querySelector('.coins-kpi-label')?.textContent ?? ''
-        const value = card?.querySelector('.coins-kpi-value')?.textContent ?? ''
-        if (label.includes('Current') && value === '7d') return { ok: true, label, value }
-        if (label.includes('Best') && value === '10d') return { ok: true, label, value }
-        await new Promise((r) => setTimeout(r, 500))
-      }
-      return { ok: false, label: '', value: '' }
+    await sleep(1400)
+    const wkGold = await js(`(() => {
+      const rows = Array.from(document.querySelectorAll('.streak-row'))
+      const perf = rows.filter((r) => r.classList.contains('perfect-wk'))
+      return { total: rows.length, perfect: perf.length, title: perf[0]?.getAttribute('title') ?? '' }
     })()`)
-    check('perfect week: streak card shows current 7d / best 10d', streakPair.ok, JSON.stringify(streakPair))
+    check('cup5: streak calendar wraps perfect week rows in a golden border', wkGold.perfect >= 1 && wkGold.title.includes('Perfect week'), JSON.stringify(wkGold))
+    // navigate the mini-month one step back → the perfect month → golden dots
+    await js(`document.querySelector('.streak-month .mm-nav')?.click()`)
+    await sleep(600)
+    const mGold = await js(`(() => ({
+      perfectM: document.querySelectorAll('.streak-day.done.perfect-m').length,
+      done: document.querySelectorAll('.streak-day.done').length,
+      none: document.querySelectorAll('.streak-day.none').length
+    }))()`)
+    check('cup5: perfect month dates are golden dots (blue text); no-event days stay normal', mGold.perfectM >= 25 && mGold.done >= mGold.perfectM && mGold.none >= 0, JSON.stringify(mGold))
+    // streak card present with a numeric value
+    const streakCard = await js(`(() => { const c = document.querySelector('.streak-kpi'); return { has: !!c, text: c ? c.textContent : '' } })()`)
+    check('streak card present with a value', streakCard.has && /\d+d/.test(streakCard.text), streakCard.text)
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
+    dbRun("DELETE FROM events WHERE title LIKE 'pwui%'")
 
     const row2 = dbGet<{ c: number }>(
       "SELECT COUNT(*) AS c FROM events WHERE title IN ('Smoke test activity', 'Smoke edited occurrence')"

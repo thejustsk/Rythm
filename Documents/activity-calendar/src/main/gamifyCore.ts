@@ -48,20 +48,27 @@ export function allDoneCheck(planned: number, resolved: number): boolean {
 }
 
 export interface PerfectDay {
-  hasDone: boolean
-  hasMissed: boolean // had a planned block that is still todo/doing
   planned: number // how many planned blocks that day
+  done: number // how many of those are 'done'
+}
+
+/** A day counts toward a perfect week when it has NO plans (rest day) or ALL
+ *  of its events are 'done'. A day with leftover todo/doing blocks is NOT
+ *  resolved (strict — no partial credit). */
+export function dayResolved(d: PerfectDay): boolean {
+  return d.planned === 0 || d.done === d.planned
 }
 
 /**
- * A perfect week = 7 days where every day is either a REST day (no planned
- * blocks — e.g. a break, which must not break the week) or the user completed
- * at least one planned block. A day only counts as missed when it had plans
- * and NOTHING was done (leftover todos on an otherwise active day don't block
- * the weekly all-done credit — that's what made it impossible in real life).
+ * PERFECT WEEK (new logic, cup 5): a Monday–Sunday series where every day with
+ * at least one event is fully 'done' (rest days are fine) AND at least one day
+ * has events — a week with no plans at all is NOT a perfect week.
  */
 export function perfectWeekCheck(days: PerfectDay[]): boolean {
-  return days.length === 7 && days.every((d) => d.planned === 0 || d.hasDone)
+  if (days.length !== 7) return false
+  const totalPlanned = days.reduce((s, d) => s + d.planned, 0)
+  if (totalPlanned === 0) return false // no-plan week → not perfect
+  return days.every(dayResolved)
 }
 
 /** ISO monday of a week (used as the once-per-week award key). */
@@ -71,6 +78,38 @@ export function weekKey(anyDayInWeek: string): string {
   const mon = new Date(d)
   mon.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
   return isoD(mon)
+}
+
+/** First day of the month containing the given ISO date (award key). */
+export function monthKey(anyDayInMonth: string): string {
+  return anyDayInMonth.slice(0, 8) + '01'
+}
+
+/**
+ * PERFECT MONTH (new logic): every day of the month belongs to a perfect week,
+ * i.e. EVERY Monday–Sunday week that overlaps the month is a perfect week
+ * (boundary weeks judged as whole weeks), and the month has at least one
+ * planned day.
+ */
+export function perfectMonthCheck(
+  monthStart: string, // YYYY-MM-DD (first of month)
+  monthEnd: string, // YYYY-MM-DD (last of month)
+  weekDays: (monIso: string) => PerfectDay[] // returns the 7 days of a week
+): boolean {
+  const mon0 = weekKey(monthStart)
+  const mon1 = weekKey(monthEnd)
+  let anyPlannedInMonth = false
+  for (let mon = mon0; ; mon = addDaysIso(mon, 7)) {
+    const days = weekDays(mon)
+    if (!perfectWeekCheck(days)) return false
+    // count planned days that lie inside the month
+    for (let i = 0; i < 7; i++) {
+      const d = addDaysIso(mon, i)
+      if (d >= monthStart && d <= monthEnd && days[i].planned > 0) anyPlannedInMonth = true
+    }
+    if (mon === mon1) break
+  }
+  return anyPlannedInMonth
 }
 
 /** The growing milestone path: 100, 250, 500, 1000, 1500, 2500, 4000, then +2000 forever. */
@@ -85,36 +124,6 @@ export function defaultMilestoneCosts(count: number): number[] {
       out.push(prev)
     }
   }
-  return out
-}
-
-/**
- * Perfect-week reward fires when the current streak hits a multiple of 7
- * (7, 14, 21, …). Returns the streak level to award (or null).
- */
-export function streakAwardLevel(streak: number): number | null {
-  return streak > 0 && streak % 7 === 0 ? streak : null
-}
-
-/** Perfect month: a 30-day streak (30, 60, 90, …). Returns the level to award. */
-export function monthAwardLevel(streak: number): number | null {
-  return streak > 0 && streak % 30 === 0 ? streak : null
-}
-
-/** PERFECT WEEK catch-up: every 7-multiple level <= streak (7, 14, 21, …).
- *  Awards must not be missed when a check happens at a non-multiple streak
- *  (e.g. a jump 6 -> 8 skips the exact-7 check) — each unclaimed level pays
- *  out whenever a check finally runs. */
-export function weekLevelsUpTo(streak: number): number[] {
-  const out: number[] = []
-  for (let l = 7; l <= streak; l += 7) out.push(l)
-  return out
-}
-
-/** PERFECT MONTH catch-up: every 30-multiple level <= streak (30, 60, …). */
-export function monthLevelsUpTo(streak: number): number[] {
-  const out: number[] = []
-  for (let l = 30; l <= streak; l += 30) out.push(l)
   return out
 }
 
