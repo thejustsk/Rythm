@@ -17,7 +17,7 @@ export default function CoinSystemDialog() {
     const next = !systemOn
     await useCoins.getState().setSystem(next)
     useToasts.getState().push({
-      message: next ? '🪙 Coin system enabled — welcome back!' : '🪙 Coin system disabled — data kept, ready to resume anytime.',
+      message: next ? '🪙 Rhythm Coins enabled — welcome back!' : '🪙 Rhythm Coins disabled — data kept, ready to resume anytime.',
       kind: 'info',
       duration: 4000
     })
@@ -30,18 +30,18 @@ export default function CoinSystemDialog() {
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && ui.closeCoinSystemConfirm()}>
       <div className="dialog coin-system-dialog">
         <div className="dialog-title">
-          <Coin size={20} /> {systemOn ? 'Turn the coin system OFF?' : 'Turn the coin system ON?'}
+          <Coin size={20} /> {systemOn ? 'Turn Rhythm Coins OFF?' : 'Turn Rhythm Coins ON?'}
         </div>
         <div className="repeat-note muted">
           {systemOn ? (
             <>
-              While OFF: the "How did it go?" prompt stops appearing, coin widgets
-              are hidden from the sidebar, and coin toasts won't show. Your balance
-              and progress are kept — turning it back ON resumes exactly where you left off.
+              While OFF: the "How did it go?" prompt stops appearing, Rhythm Coins
+              widgets are hidden from the sidebar, and coin toasts won't show. Your
+              balance and progress are kept — turning it back ON resumes exactly where you left off.
             </>
           ) : (
             <>
-              Turn the coin system back on? Your balance, milestones and streak are
+              Turn Rhythm Coins back on? Your balance, milestones and streak are
               all still here — it will resume exactly where you left off.
             </>
           )}

@@ -731,6 +731,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       digest: document.querySelectorAll('.digest li').length,
       charts: document.querySelectorAll('.chart-svg').length,
       heat: document.querySelectorAll('.heatmap .heat-cell').length,
+      weeks: document.querySelectorAll('.heat-week').length,
+      heatWrap: !!document.querySelector('.heatmap-wrap'),
+      heatBtn: !!document.querySelector('.heat-head-btn'),
       donut: !!document.querySelector('.donut'),
       progress: document.querySelectorAll('.ins-progress').length
     })`)
@@ -738,10 +741,87 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     check('summary cards render (>=4)', iv.cards >= 4, String(iv.cards))
     check('plain-language digest present (>=3)', iv.digest >= 3, String(iv.digest))
     check('charts render (>=4)', iv.charts >= 4, String(iv.charts))
-    check('heatmap renders (112 cells)', iv.heat === 112, String(iv.heat))
+    check('heatmap renders AT LEAST 16 weeks (112+ cells, week columns)', iv.heat >= 112 && iv.weeks >= 16, JSON.stringify({ heat: iv.heat, weeks: iv.weeks }))
+    check('heatmap is horizontally scrollable + heading clickable', iv.heatWrap && iv.heatBtn, JSON.stringify(iv))
+    // CUP-5b: heatmap FILLS its box — the week columns stretch (no dead space)
+    const heatFill = await js(`(() => {
+      const wrap = document.querySelector('.heatmap-wrap')
+      const map = document.querySelector('.heatmap')
+      if (!wrap || !map) return null
+      const wr = wrap.getBoundingClientRect()
+      const mr = map.getBoundingClientRect()
+      const cw = wrap.clientWidth // content width (scrollbar-gutter excluded)
+      return { wrapW: Math.round(wr.width), mapW: Math.round(mr.width), cw: Math.round(cw), fills: mr.width >= cw - 4 }
+    })()`)
+    check('cup5b: heatmap stretches to fill the box (no dead space)', !!heatFill && heatFill.fills, JSON.stringify(heatFill))
+    // threshold popover: opens, saves to settings
+    await js(`document.querySelector('.heat-head-btn')?.click()`)
+    await sleep(300)
+    const heatPop = await js(`!!document.querySelector('.heat-pop')`)
+    check('heatmap threshold popover opens on heading click', heatPop)
+    await js(`(${SET_VALUE})(document.querySelector('.heat-pop input'), '3')`)
+    await js(`Array.from(document.querySelectorAll('.heat-pop .btn')).find((b) => b.textContent.trim() === 'Save')?.click()`)
+    await sleep(400)
+    const heatT = await js(`window.api.settings.get('heatT1')`)
+    check('heatmap threshold saved (heatT1=3)', heatT === '3', String(heatT))
+    // rename check: the panel is now "Activity heatmap"
+    const heatTitle = await js(`document.querySelector('.heat-head-btn')?.textContent ?? ''`)
+    check('heatmap heading renamed to Activity heatmap', heatTitle.includes('Activity heatmap'), heatTitle)
+    // threshold VALIDATION: low >= medium must block save + show the error
+    await js(`document.querySelector('.heat-head-btn')?.click()`)
+    await sleep(300)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.heat-pop input')[0], '7')`) // low 7
+    await js(`(${SET_VALUE})(document.querySelectorAll('.heat-pop input')[1], '5')`) // medium 5 → invalid
+    await sleep(250)
+    const heatInvalid = await js(`(() => {
+      const err = document.querySelector('.heat-pop-err')
+      const save = Array.from(document.querySelectorAll('.heat-pop .btn')).find((b) => b.textContent.trim() === 'Save')
+      return { err: err ? err.textContent : '', disabled: save ? save.disabled : false }
+    })()`)
+    check('cup5b: invalid thresholds (low >= medium) show error + block Save', heatInvalid.err.includes('less than') && heatInvalid.disabled, JSON.stringify(heatInvalid))
+    // fix it back to valid and save
+    await js(`(${SET_VALUE})(document.querySelectorAll('.heat-pop input')[0], '2')`)
+    await sleep(200)
+    const heatValid = await js(`(() => { const save = Array.from(document.querySelectorAll('.heat-pop .btn')).find((b) => b.textContent.trim() === 'Save'); return save ? !save.disabled : false })()`)
+    check('cup5b: valid thresholds re-enable Save', heatValid)
+    await js(`Array.from(document.querySelectorAll('.heat-pop .btn')).find((b) => b.textContent.trim() === 'Cancel')?.click()`)
+    await sleep(200)
+    await js(`window.api.settings.set('heatT1', '2')`)
+    await js(`window.api.settings.set('heatT2', '5')`)
     check('donut + label progress present', iv.donut && iv.progress > 0, String(iv.progress))
     const digText = await js(`Array.from(document.querySelectorAll('.digest li')).map((e) => e.textContent).join(' | ')`)
     check('digest mentions planned time', /planned|completed/i.test(digText), digText.slice(0, 80))
+    // v1.10.5: period TOGGLE — clicking the selected chip turns it AMBER and
+    // shows the PREVIOUS period; clicking again returns to blue
+    await js(`Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.trim() === 'This month').click()`)
+    await sleep(500)
+    await js(`Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.includes('month')).click()`)
+    await sleep(600)
+    const toggle1 = await js(`(() => {
+      const b = Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((x) => x.textContent.includes('month'))
+      return { label: b?.textContent.trim() ?? '', amber: b ? b.classList.contains('alt') : false }
+    })()`)
+    check('v1.10.5: selected chip toggles to amber + "Last month"', toggle1.amber && toggle1.label === 'Last month', JSON.stringify(toggle1))
+    await js(`Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.includes('month')).click()`)
+    await sleep(600)
+    const toggle2 = await js(`(() => {
+      const b = Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((x) => x.textContent.includes('month'))
+      return { label: b?.textContent.trim() ?? '', amber: b ? b.classList.contains('alt') : false }
+    })()`)
+    check('v1.10.5: clicking again returns to blue "This month"', !toggle2.amber && toggle2.label === 'This month', JSON.stringify(toggle2))
+    // switching to another tab resets to a fresh selection state
+    await js(`Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.includes('week')).click()`)
+    await sleep(600)
+    const toggle3 = await js(`(() => {
+      const b = Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((x) => x.textContent.includes('week'))
+      return { label: b?.textContent.trim() ?? '', amber: b ? b.classList.contains('alt') : false, active: b ? b.classList.contains('active') : false }
+    })()`)
+    check('v1.10.5: switching tabs resets the chip (This week, blue, active)', toggle3.label === 'This week' && !toggle3.amber && toggle3.active, JSON.stringify(toggle3))
+    // heatmap: with the period window, the wrap scrolls to the LATEST (right)
+    await js(`Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.trim() === 'This week').click()`)
+    await sleep(600)
+    const heatScroll = await js(`(() => { const w = document.querySelector('.heatmap-wrap'); return w ? { scrollLeft: Math.round(w.scrollLeft), max: w.scrollWidth - w.clientWidth } : null })()`)
+    check('v1.10.5: heatmap scrolled to the LATEST weeks (right end)', !!heatScroll && heatScroll.scrollLeft >= heatScroll.max - 4, JSON.stringify(heatScroll))
     await js(`Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.trim() === 'This month').click()`)
     await sleep(500)
     const iv2 = await js(`({ view: !!document.querySelector('.insights-view'), cards: document.querySelectorAll('.ins-card').length })`)
@@ -749,7 +829,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.trim() === 'All time').click()`)
     await sleep(500)
     const iv3 = await js(`!!document.querySelector('.insights-view') && document.querySelectorAll('.heatmap .heat-cell').length`)
-    check('all-time period renders', iv3 === 112, String(iv3))
+    check('all-time period renders (heatmap follows the period — full history window)', iv3 > 0, String(iv3))
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
 
@@ -784,6 +864,40 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       searchPill: (() => { const s = document.querySelector('.status-pills .searchbox'); return s ? getComputedStyle(s).borderRadius : '' })()
     }))()`)
     check('search + New moved into the status-pills row (long pill); toolbar = tabs + settings only', tbLayout.searchInPills && tbLayout.newInPills && !tbLayout.searchInToolbar && !tbLayout.newInToolbar && tbLayout.settingsBtn && tbLayout.searchPill === '999px', JSON.stringify(tbLayout))
+    // SIDEBAR OVERLAP (v1.10.4): with the mini-month picker EXPANDED, the label
+    // tree must scroll internally and never overlap the Today card
+    await js(`(() => { const t = document.querySelector('.sidebar .mm-title'); if (t) t.click(); return !!t })()`)
+    await sleep(600)
+    const pickerOpen2 = await js(`!!document.querySelector('.sidebar .mm-picker')`)
+    const sideGeo = await js(`(() => {
+      const sb = document.querySelector('.sidebar').getBoundingClientRect()
+      const tc = document.querySelector('.today-card').getBoundingClientRect()
+      const tree = document.querySelector('.label-tree')
+      const tr = tree ? tree.getBoundingClientRect() : null
+      const rows = Array.from(document.querySelectorAll('.label-row'))
+      let overlap = false
+      for (const r of rows) {
+        const rr = r.getBoundingClientRect()
+        if (rr.bottom > tc.top + 2 && rr.top < tc.bottom - 2) overlap = true
+      }
+      return {
+        todayInSidebar: tc.bottom <= sb.bottom + 2 && tc.top >= sb.top - 2,
+        treeScrolls: tr ? tree.scrollHeight > tree.clientHeight : false,
+        rowsOverlapToday: overlap,
+        pickerFloats: (() => { const p = document.querySelector('.sidebar .mm-picker'); const pr = p ? p.getBoundingClientRect() : null; return pr ? pr.bottom <= sb.bottom + 2 : false })()
+      }
+    })()`)
+    check('v1.10.4: expanded calendar picker does NOT make labels overlap the Today card', pickerOpen2 && sideGeo.todayInSidebar && !sideGeo.rowsOverlapToday && sideGeo.treeScrolls && sideGeo.pickerFloats, JSON.stringify(sideGeo))
+    // v1.10.5: the picker stays INSIDE the calendar widget (covers the day grid)
+    const pickerInside = await js(`(() => {
+      const mm = document.querySelector('.sidebar .minimonth')?.getBoundingClientRect()
+      const pk = document.querySelector('.sidebar .mm-picker')?.getBoundingClientRect()
+      if (!mm || !pk) return { found: false }
+      return { found: true, inside: pk.left >= mm.left - 1 && pk.right <= mm.right + 1 && pk.bottom <= mm.bottom + 1 }
+    })()`)
+    check('v1.10.5: month/year picker stays inside the calendar widget', pickerInside.found && pickerInside.inside, JSON.stringify(pickerInside))
+    await js(`(() => { const t = document.querySelector('.sidebar .mm-title'); if (t) t.click(); return !!t })()`)
+    await sleep(300)
     await js(`Array.from(document.querySelectorAll('.status-pills .pill')).find((x) => x.textContent.startsWith('All'))?.click()`)
     await sleep(300)
     // CUP-4: the filter counts are scoped to the SELECTED PERIOD — they must
@@ -1305,11 +1419,25 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     // 2ag. all-time >= this-year (no data loss across periods)
     await js(`Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.trim() === 'This year').click()`)
     await sleep(700)
-    const yearPlanned = await js(`document.querySelector('.ins-card.kpi[data-card="0"] .ins-card-value')?.textContent ?? ''`)
+    const yearPlanned = await js(`(async () => {
+      for (let i = 0; i < 12; i++) {
+        const card = document.querySelector('.ins-card.kpi[data-card="0"]')
+        if (card && (card.querySelector('.ins-card-label')?.textContent ?? '') === 'Planned time') return card.querySelector('.ins-card-value')?.textContent ?? ''
+        await new Promise((r) => setTimeout(r, 400))
+      }
+      return ''
+    })()`)
     const yearH = parseFloat(yearPlanned) || 0
     await js(`Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.trim() === 'All time').click()`)
     await sleep(700)
-    const allPlanned = await js(`document.querySelector('.ins-card.kpi[data-card="0"] .ins-card-value')?.textContent ?? ''`)
+    const allPlanned = await js(`(async () => {
+      for (let i = 0; i < 12; i++) {
+        const card = document.querySelector('.ins-card.kpi[data-card="0"]')
+        if (card && (card.querySelector('.ins-card-label')?.textContent ?? '') === 'Planned time') return card.querySelector('.ins-card-value')?.textContent ?? ''
+        await new Promise((r) => setTimeout(r, 400))
+      }
+      return ''
+    })()`)
     const allH = parseFloat(allPlanned) || 0
     check('all-time shows at least as much as this year', allH >= yearH, `${yearPlanned} → ${allPlanned}`)
     await js(`Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.trim() === 'This week').click()`)
@@ -1616,17 +1744,21 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       const title = document.querySelector('.agenda-title')
       if (!view || !title) return null
       const tr = title.getBoundingClientRect()
+      const vr = view.getBoundingClientRect()
       const probes = [
-        { x: Math.round(tr.left + 6), y: Math.round(tr.top + tr.height / 2) },  // left padding strip
-        { x: Math.round(tr.right - 6), y: Math.round(tr.top + tr.height / 2) }, // right padding strip
+        // the card's extreme LEFT/RIGHT edges (outside the title if it doesn't
+        // span the full card width — the true bleed strips)
+        { x: Math.round(vr.left + 4), y: Math.round(tr.top + tr.height / 2) },
+        { x: Math.round(vr.right - 12), y: Math.round(tr.top + tr.height / 2) },
+        { x: Math.round(tr.left + 6), y: Math.round(tr.top + tr.height / 2) },
         { x: Math.round(tr.left + tr.width / 2), y: Math.round(tr.top + 4) }
       ].map((p) => {
         const el = document.elementFromPoint(p.x, p.y)
         return el ? title.contains(el) || el === title : false
       })
-      return { probes, allCovered: probes.every(Boolean) }
+      return { probes, allCovered: probes.every(Boolean), titleX: Math.round(tr.left), titleW: Math.round(tr.width), viewW: Math.round(vr.width) }
     })()`)
-    check('agenda: sticky title covers side padding (no bleed)', !!agBleed && agBleed.allCovered, JSON.stringify(agBleed))
+    check('agenda: sticky title covers the FULL card width while scrolling (no side bleed)', !!agBleed && agBleed.allCovered && agBleed.titleW >= agBleed.viewW - 20, JSON.stringify(agBleed))
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
 
@@ -1922,14 +2054,42 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
 
     // 2aw. Coins view (revamped): 3:1 layout, coin-drop intro, KPI dice, streak cal, path
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
-    await sleep(400)
+    // v1.10.6: the intro stage must be VIEWPORT-anchored from the very first
+    // frame of the view switch (the 0.3s viewIn transform is disabled on the
+    // coins view) — otherwise the navy bg stretches/snaps with the collapsing
+    // sidebar. Probe ~120ms in, while the sidebar transition is still running.
+    await sleep(120)
+    const introRect = await js(`(async () => {
+      for (let i = 0; i < 8; i++) {
+        const d = document.querySelector('.coin-drop')
+        if (d) {
+          const r = d.getBoundingClientRect()
+          return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), vw: window.innerWidth, vh: window.innerHeight }
+        }
+        await new Promise((r2) => setTimeout(r2, 20))
+      }
+      return null
+    })()`)
+    check('v1.10.6: intro stage is viewport-anchored during the view switch (no bg stretch/jump)', !!introRect && introRect.x === 0 && introRect.y === 0 && introRect.w === introRect.vw && introRect.h === introRect.vh, JSON.stringify(introRect))
+    await sleep(300)
     const dropIntro = await js(`(() => { const d = document.querySelector('.coin-drop'); if (!d) return { present: false }; return { present: true, hasCenter: !!d.querySelector('.intro-center'), hasCoin: !!d.querySelector('.intro-coin .rhythm-coin img'), rings: d.querySelectorAll('.intro-ring').length, hasCanvas: !!d.querySelector('.dust-canvas'), hasWord: !!d.querySelector('.intro-word'), stage: !!d.querySelector('.intro-stage') } })()`)
     check('coins: professional cinematic intro (navy stage, coin drop, gold-dust canvas, rings, wordmark)', dropIntro.present && dropIntro.hasCenter && dropIntro.hasCoin && dropIntro.rings >= 2 && dropIntro.hasCanvas && dropIntro.hasWord && dropIntro.stage, JSON.stringify(dropIntro))
     // the reward prompt must wait for the intro to END (checked on the FIRST visit, where the intro plays)
     const promptDuringIntro = await js(`!!document.querySelector('.coin-drop') && !document.querySelector('.reward-batch')`)
     check('reward prompt does NOT appear during the intro', promptDuringIntro)
     const introVer = await js(`document.querySelector('.intro-word-ver')?.textContent ?? ''`)
-    check('intro shows version tag (build identification)', introVer.includes('v1.9.2'), introVer)
+    check('intro shows version tag (build identification)', introVer.includes('v1.10.6'), introVer)
+    // v1.10.6: the coin system is named "Rhythm Coins" everywhere
+    const naming = await js(`(() => {
+      const tab = Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins'))
+      const pill = document.querySelector('.premium-heading.coins')
+      return {
+        tab: tab ? tab.textContent.trim() : '',
+        pill: pill ? pill.textContent.trim() : '',
+        pillTitle: pill ? pill.getAttribute('title') || '' : ''
+      }
+    })()`)
+    check('v1.10.6: coin system named "Rhythm Coins" (tab, heading, pill tooltip)', naming.tab.includes('Rhythm Coins') && naming.pill.includes('Rhythm Coins') && naming.pillTitle.includes('Rhythm Coins'), JSON.stringify(naming))
     const noSideVer = await js(`!document.querySelector('.sidebar-version')`)
     check('no version tag in the sidebar', noSideVer)
     const flipAnim = await js(`(() => {
@@ -2102,7 +2262,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`(() => { const d = document.querySelector('.coin-drop'); if (d) d.click() })()`)
     await sleep(700)
     const stones0 = await js(`window.api.milestones.list()`)
-    check('milestone path auto-created (8 stones, first at 100)', Array.isArray(stones0) && stones0.length >= 8 && stones0[0].cost === 100, JSON.stringify(stones0?.[0]))
+    check('milestone path auto-created (>=30 levels, first at 100, infinite +2000 ladder)', Array.isArray(stones0) && stones0.length >= 30 && stones0[0].cost === 100 && stones0[29].cost > 40000, JSON.stringify({ n: stones0.length, first: stones0[0].cost, last: stones0[stones0.length - 1].cost }))
     const firstStone = stones0[0]
     const secondStone = stones0[1]
     // fund 230 (disposable smoke DB has a fresh balance) + a refunded 30 →
@@ -2466,7 +2626,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     const mig = await js(`window.api.milestones.list()`)
     check(
       'migration: legacy achieved levels reset to fresh Level 1 path',
-      Array.isArray(mig) && mig.length >= 8 && mig[0].name === 'Level 1' && mig[0].achievedAt === null && mig.every((m: any) => m.achievedAt === null),
+      Array.isArray(mig) && mig.length >= 30 && mig[0].name === 'Level 1' && mig[0].achievedAt === null && mig.every((m: any) => m.achievedAt === null),
       JSON.stringify(mig?.[0])
     )
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
@@ -2502,7 +2662,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     const norm = await js(`window.api.milestones.list()`)
     check(
       'normalization: legacy rows repaired even with v2 flag already set',
-      Array.isArray(norm) && norm.length === 8 && norm[0].name === 'Level 1' && norm[0].cost === 100 && norm[7].cost === 6000 && !norm.some((m: any) => m.name === 'Level 999'),
+      Array.isArray(norm) && norm.length >= 30 && norm[0].name === 'Level 1' && norm[0].cost === 100 && norm[7].cost === 6000 && norm[29].cost > 40000 && !norm.some((m: any) => m.name === 'Level 999'),
       JSON.stringify((norm as any[]).map((m) => m.name + ':' + m.cost))
     )
     // REACHED-not-claimed: fund 150 on a CLEAN ledger (Level 1 reached, NOT claimed) → Level 2 shows
@@ -3041,6 +3201,14 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     })()`)
     check('cup5: streak calendar rows are dynamic (4-6, not always 6)', dynRows.streakRows >= 4 && dynRows.streakRows <= 6, JSON.stringify(dynRows))
     check('cup5: mini-month cells are dynamic (28-42, not always 42)', dynRows.miniCells >= 28 && dynRows.miniCells <= 42 && dynRows.miniCells % 7 === 0, JSON.stringify(dynRows))
+    // CUP-5: streak calendar footer legend includes the 2 new styles
+    const legend = await js(`(() => ({
+      perfectWk: !!document.querySelector('.streak-legend .sl.perfect-wk'),
+      perfectM: !!document.querySelector('.streak-legend .sl.perfect-m'),
+      text: document.querySelector('.streak-legend')?.textContent ?? ''
+    }))()`)
+    check('cup5: streak calendar legend shows perfect week + perfect month styles', legend.perfectWk && legend.perfectM && legend.text.includes('perfect week') && legend.text.includes('perfect month'), JSON.stringify(legend))
+
     // navigate the mini-month one step back → the perfect month → golden dots
     await js(`document.querySelector('.streak-month .mm-nav')?.click()`)
     await sleep(600)
@@ -3053,9 +3221,121 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     // streak card present with a numeric value
     const streakCard = await js(`(() => { const c = document.querySelector('.streak-kpi'); return { has: !!c, text: c ? c.textContent : '' } })()`)
     check('streak card present with a value', streakCard.has && /\d+d/.test(streakCard.text), streakCard.text)
+    // CUP-5b: streak history — old done days (beyond the old 12-week window) must
+    // update the streak AND be styled in the streak calendar
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
     dbRun("DELETE FROM events WHERE title LIKE 'pwui%'")
+    dbRun("DELETE FROM events")
+    // 150 days of done events ending yesterday (deep history)
+    for (let i = 1; i <= 150; i++) {
+      const d = new Date(Date.now() - i * 86400000)
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      dbRun(
+        `INSERT INTO events (id, title, description, start_local, end_local, all_day, label_id, color_override, status, rrule, exdates, parent_id, origin_date, completed_at, created_at, updated_at)
+         VALUES (?, 'HIST', '', ?, ?, 0, NULL, NULL, 'done', NULL, '[]', NULL, NULL, ?, ?, ?)`,
+        'hist-' + i, iso + 'T09:00', iso + 'T10:00', new Date().toISOString(), new Date().toISOString(), new Date().toISOString()
+      )
+    }
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
+    await js(`(() => { const d = document.querySelector('.coin-drop'); if (d) d.click() })()`)
+    await sleep(1600)
+    const histStreak = await js(`(async () => {
+      for (let i = 0; i < 10; i++) {
+        const c = document.querySelector('.streak-kpi')
+        if (c && c.textContent.includes('d')) return c.textContent
+        await new Promise((r) => setTimeout(r, 400))
+      }
+      return ''
+    })()`)
+    check('cup5b: deep history (150 done days) updates the streak (>=120d)', /\d+d/.test(histStreak) && parseInt(histStreak.match(/(\d+)d/)?.[1] ?? '0', 10) >= 120, histStreak)
+    // navigate 3 months back in the streak calendar → the deep history must be styled there
+    await js(`(() => { const nav = document.querySelector('.streak-month .mm-nav'); if (nav) { nav.click(); nav.click(); nav.click() } })()`)
+    await sleep(800)
+    const histCal = await js(`(() => ({
+      done: document.querySelectorAll('.streak-month .streak-day.done').length,
+      rows: document.querySelectorAll('.streak-month .streak-row').length,
+      title: document.querySelector('.streak-month-title')?.textContent ?? ''
+    }))()`)
+    check('cup5b: streak calendar styles the deep history (old month full of done cells)', histCal.done >= 25 && histCal.rows >= 4, JSON.stringify(histCal))
+    // v1.10.6: CURRENT-WEEK cover — with the streak alive today and all days
+    // Mon..today resolved, the golden cover runs Mon..today ONLY (day rings),
+    // never across the whole row; and no cell AFTER today wears it. On a
+    // SUNDAY the finished week wears the full perfect-week border instead.
+    dbRun("DELETE FROM events")
+    dbRun("DELETE FROM settings WHERE key LIKE 'streakAward.%'")
+    const wkMonIso = (() => { const d = new Date(); const dow = d.getDay(); const m = new Date(d); m.setDate(m.getDate() - (dow === 0 ? 6 : dow - 1)); return fmtD(m) })()
+    const addD = (iso: string, n: number) => { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return fmtD(d) }
+    const dowNum = new Date().getDay()
+    const dayIdxMon0 = dowNum === 0 ? 6 : dowNum - 1 // Mon=0 .. Sun=6
+    const seedCount = Math.min(3, Math.max(1, dayIdxMon0)) // done days Mon..(today-1), max 3
+    for (let i = 0; i < seedCount; i++) {
+      dbRun(
+        `INSERT INTO events (id, title, description, start_local, end_local, all_day, label_id, color_override, status, rrule, exdates, parent_id, origin_date, completed_at, created_at, updated_at)
+         VALUES (?, 'CWC', '', ?, ?, 0, NULL, NULL, 'done', NULL, '[]', NULL, NULL, ?, ?, ?)`,
+        'cwc-' + i, addD(wkMonIso, i) + 'T09:00', addD(wkMonIso, i) + 'T10:00', new Date().toISOString(), new Date().toISOString(), new Date().toISOString()
+      )
+    }
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
+    await js(`(() => { const d = document.querySelector('.coin-drop'); if (d) d.click() })()`)
+    await sleep(1600)
+    const curWk = await js(`(() => {
+      const rows = Array.from(document.querySelectorAll('.streak-row'))
+      const idx = rows.findIndex((r) => Array.from(r.querySelectorAll('.streak-day.today')).length > 0)
+      const row = idx >= 0 ? rows[idx] : null
+      const cells = row ? Array.from(row.querySelectorAll('.streak-day')) : []
+      const dayIdx = cells.findIndex((c) => c.classList.contains('today'))
+      return {
+        idx, rowPerfect: row ? row.classList.contains('perfect-wk') : false,
+        rowUp: row ? row.classList.contains('perfect-up') : false,
+        dayIdx,
+        covers: cells.filter((c) => c.classList.contains('cover')).length,
+        afterCover: cells.filter((c, i) => i > dayIdx && c.classList.contains('cover')).length,
+        month: document.querySelector('.streak-month-title')?.textContent ?? ''
+      }
+    })()`)
+    const expectCovers = dayIdxMon0 + 1 // Mon..today
+    const okSun = dowNum === 0 && curWk.rowPerfect && !curWk.rowUp && curWk.covers === 0
+    const okMid = dowNum !== 0 && curWk.rowUp && !curWk.rowPerfect && curWk.covers === expectCovers && curWk.afterCover === 0
+    check('v1.10.6: current-week cover stops at TODAY (Mon..today rings, never beyond)', curWk.idx >= 0 && (okSun || okMid), JSON.stringify({ ...curWk, expectCovers }))
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    dbRun("DELETE FROM events WHERE title LIKE 'CWC%'")
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    dbRun("DELETE FROM events WHERE title LIKE 'HIST%'")
+    // v1.10.5: STREAK-GOAL REWARD → ledger + toaster. Seed a 5-day streak, then
+    // open the Coins tab (the streak-change check fires the bonus IPC) →
+    // the reward must land in the LEDGER and the TOASTER.
+    dbRun("DELETE FROM events")
+    dbRun("DELETE FROM settings WHERE key LIKE 'streakMs.%'")
+    for (let i = 1; i <= 5; i++) {
+      const d = new Date(Date.now() - i * 86400000)
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      dbRun(
+        `INSERT INTO events (id, title, description, start_local, end_local, all_day, label_id, color_override, status, rrule, exdates, parent_id, origin_date, completed_at, created_at, updated_at)
+         VALUES (?, 'SG5', '', ?, ?, 0, NULL, NULL, 'done', NULL, '[]', NULL, NULL, ?, ?, ?)`,
+        'sg5-' + i, iso + 'T09:00', iso + 'T10:00', new Date().toISOString(), new Date().toISOString(), new Date().toISOString()
+      )
+    }
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
+    await js(`(() => { const d = document.querySelector('.coin-drop'); if (d) d.click() })()`)
+    await sleep(2000)
+    const sgToast = await js(`(async () => {
+      for (let i = 0; i < 10; i++) {
+        const t = Array.from(document.querySelectorAll('.toast')).find((x) => x.textContent.includes('streak milestone'))
+        if (t) return t.textContent
+        await new Promise((r) => setTimeout(r, 400))
+      }
+      return ''
+    })()`)
+    const sgLedger = await js(`window.api.coins.listTransactions().then((txs) => txs.filter((t) => t.reason === 'Streak milestone'))`)
+    check('v1.10.5: 5-day streak reward → toast + ledger row', sgToast.includes('streak milestone') && sgLedger.length >= 1 && sgLedger[0].amount === 10, JSON.stringify({ toast: sgToast, ledger: sgLedger[0] }))
+    await js(`document.querySelectorAll('.toast-close').forEach((c) => c.click())`)
+    await sleep(200)
+    dbRun("DELETE FROM events WHERE title LIKE 'SG5%'")
 
     const row2 = dbGet<{ c: number }>(
       "SELECT COUNT(*) AS c FROM events WHERE title IN ('Smoke test activity', 'Smoke edited occurrence')"
@@ -3127,8 +3407,12 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await sleep(600)
     await js(`document.querySelector('.premium-heading.coins').click()`)
     await sleep(400)
-    const sysDlg = await js(`!!document.querySelector('.coin-system-dialog')`)
-    check('cup3: clicking the Coins pill opens the system dialog', sysDlg)
+    const sysDlg = await js(`(() => ({
+      open: !!document.querySelector('.coin-system-dialog'),
+      title: document.querySelector('.coin-system-dialog .dialog-title')?.textContent ?? ''
+    }))()`)
+    check('cup3: clicking the Coins pill opens the system dialog', sysDlg.open)
+    check('v1.10.6: system dialog names it "Rhythm Coins"', sysDlg.title.includes('Rhythm Coins'), sysDlg.title)
     await js(`Array.from(document.querySelectorAll('.coin-system-dialog .dialog-actions .btn')).find((b) => b.textContent.includes('disable')).click()`)
     await sleep(600)
     const sysOff = await js(`(async () => ({
@@ -3136,9 +3420,11 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       chip: !!document.querySelector('.coin-chip'),
       widget: !!document.querySelector('.mile-widget'),
       banner: !!document.querySelector('.coins-off-banner'),
+      bannerText: document.querySelector('.coins-off-banner')?.textContent ?? '',
       checkIn: await window.api.coins.checkIn()
     }))()`)
     check('cup3: system OFF → setting 0, sidebar widgets hidden, banner shown, check-in disabled', sysOff.setting === '0' && !sysOff.chip && !sysOff.widget && sysOff.banner && !sysOff.checkIn.award, JSON.stringify(sysOff))
+    check('v1.10.6: off-banner names it "Rhythm Coins"', sysOff.bannerText.includes('Rhythm Coins'), sysOff.bannerText)
     // re-enable from the same pill → everything comes back (data kept)
     await js(`document.querySelector('.premium-heading.coins').click()`)
     await sleep(400)
@@ -3158,7 +3444,8 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     // create a todo event + mark it done while OFF (via DB to simulate the saved state)
     await js(`window.api.events.create({ title: 'Smoke offdone', description: '', startLocal: '${TODAY}T14:00', endLocal: '${TODAY}T15:00', allDay: false, labelId: null, colorOverride: null, status: 'todo', rrule: null, exdates: '[]' })`)
     const offEv = await js(`window.api.events.list().then((es) => es.find((e) => e.title === 'Smoke offdone'))`)
-    await js(`window.api.events.update(offEv.id, { status: 'done' })`)
+    if (!offEv || !offEv.id) throw new Error('cup3v3 prep: Smoke offdone event was not created')
+    await js(`window.api.events.update('${offEv.id}', { status: 'done' })`)
     await js(`window.api.coins.setSystem(true)`) // re-enable
     // open that done event and Save — must NOT prompt nor earn
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
@@ -3171,9 +3458,20 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     const offPromptAfter = await js(`!!document.querySelector('.score-prompt')`)
     const balAfter = await js(`window.api.coins.balance()`)
     check('cup3v3: done-while-OFF event re-saved after re-enable → NO popup, NO coins', !offPromptBefore && !offPromptAfter && Math.round(balAfter) === Math.round(balOff), JSON.stringify({ offPromptBefore, offPromptAfter, balOff, balAfter }))
-    await js(`window.api.events.remove(offEv.id)`)
+    await js(`window.api.events.remove('${offEv.id}')`)
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
+    // v1.10.6: the ledger renders EVERY transaction — no 20-row cap in the UI,
+    // no LIMIT in the IPC (by this point the suite has dozens of entries)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
+    await js(`(() => { const d = document.querySelector('.coin-drop'); if (d) d.click() })()`)
+    await sleep(700)
+    const ledgerAll = await js(`(async () => ({
+      rows: document.querySelectorAll('.ledger-row').length,
+      tx: (await window.api.coins.listTransactions()).length,
+      count: document.querySelector('.ledger-count')?.textContent ?? ''
+    }))()`)
+    check('v1.10.6: ledger renders EVERY transaction (no cap)', ledgerAll.tx >= 20 && ledgerAll.rows === ledgerAll.tx && ledgerAll.count.includes(String(ledgerAll.tx)), JSON.stringify(ledgerAll))
 
     const errs = await js(`window.__errors || []`)
     check('no renderer errors at end', errs.length === 0, String(errs))

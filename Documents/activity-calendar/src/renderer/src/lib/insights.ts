@@ -98,7 +98,9 @@ export function computeInsights(
   rangeStart: Date,
   rangeEnd: Date,
   /** filter to one top-level label (its children included) — M7 item 7 */
-  topLabelId: string | null = null
+  topLabelId: string | null = null,
+  /** the selected period — the heatmap window follows it */
+  period: string = 'week'
 ): Insights {
   const occs = computeOccurrences(events, rangeStart, rangeEnd)
 
@@ -306,10 +308,22 @@ export function computeInsights(
 
   // ---- global pass (last 150 days): streak (skips empty days), first done ----
   const today = startOfDay(new Date())
-  const gOccs = computeOccurrences(events, addDays(today, -400), addDays(today, 1))
+  const gOccs = computeOccurrences(events, addDays(today, -2000), addDays(today, 1))
   const gDay = new Map<string, { planned: number; done: number }>()
+  const hiddenSet = new Set(hidden)
   for (const o of gOccs) {
     if (o.event.status === 'cancelled') continue
+    // respect the label filters: hidden labels + the focused label
+    let top: Label | null = null
+    if (o.event.labelId) {
+      const l = labels.find((x) => x.id === o.event.labelId)
+      if (l) {
+        if (hiddenSet.has(l.id)) continue
+        top = l.parentId ? labels.find((x) => x.id === l.parentId) ?? l : l
+        if (top && hiddenSet.has(top.id)) continue
+      }
+    }
+    if (topLabelId && (top?.id ?? null) !== topLabelId) continue
     const dur = (o.end.getTime() - o.start.getTime()) / 60000
     const day = isoD(o.start)
     const g = gDay.get(day) ?? { planned: 0, done: 0 }
@@ -319,7 +333,7 @@ export function computeInsights(
   }
   let streak = 0
   let streakStart: string | null = null
-  for (let i = 0; i < 400; i++) {
+  for (let i = 0; i < 2000; i++) {
     const day = addDays(today, -i)
     const g = gDay.get(isoD(day))
     const p = (g?.planned ?? 0) > 0
@@ -355,11 +369,31 @@ export function computeInsights(
     }
   }
 
-  // last 16 weeks of activity (global pass, split by day)
+  // activity heatmap: follows the SELECTED PERIOD (week → at least 16 weeks
+  // back or the first completion; month/year/all/custom → exactly that window).
+  // Respects the label filters (gDay above is already filtered).
+  const monOf = (d: Date) => {
+    const dow = d.getDay()
+    return addDays(d, dow === 0 ? -6 : 1 - dow)
+  }
+  let heatStart: Date
+  let heatEnd: Date = rangeEnd.getTime() > today.getTime() ? today : rangeEnd
+  if (period !== 'week') {
+    heatStart = monOf(rangeStart)
+  } else {
+    heatStart = addDays(monOf(today), -15 * 7) // ~16 weeks back, Monday-aligned
+    // always AT LEAST 112 cells (16 full weeks) — extend by whole weeks
+    while (Math.round((today.getTime() - heatStart.getTime()) / 86400000) + 1 < 112) {
+      heatStart = addDays(heatStart, -7)
+    }
+    if (firstDone) {
+      const fdMon = monOf(new Date(firstDone + 'T00:00:00'))
+      if (fdMon.getTime() < heatStart.getTime()) heatStart = fdMon
+    }
+  }
   const heatmap: Array<{ date: string; min: number }> = []
-  for (let i = 111; i >= 0; i--) {
-    const day = addDays(today, -i)
-    const iso = isoD(day)
+  for (let d = heatStart; d.getTime() <= heatEnd.getTime(); d = addDays(d, 1)) {
+    const iso = isoD(d)
     heatmap.push({ date: iso, min: gDay.get(iso)?.planned ?? 0 })
   }
 

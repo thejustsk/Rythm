@@ -94,22 +94,25 @@ export function monthKey(anyDayInMonth: string): string {
 export function perfectMonthCheck(
   monthStart: string, // YYYY-MM-DD (first of month)
   monthEnd: string, // YYYY-MM-DD (last of month)
-  weekDays: (monIso: string) => PerfectDay[] // returns the 7 days of a week
+  dayOf: (iso: string) => PerfectDay
 ): boolean {
-  const mon0 = weekKey(monthStart)
-  const mon1 = weekKey(monthEnd)
-  let anyPlannedInMonth = false
-  for (let mon = mon0; ; mon = addDaysIso(mon, 7)) {
-    const days = weekDays(mon)
-    if (!perfectWeekCheck(days)) return false
-    // count planned days that lie inside the month
-    for (let i = 0; i < 7; i++) {
-      const d = addDaysIso(mon, i)
-      if (d >= monthStart && d <= monthEnd && days[i].planned > 0) anyPlannedInMonth = true
+  // EVERY day of the month must be either a rest day (no events planned) or
+  // have at least ONE done event — AND no block of 7+ consecutive no-event
+  // days may exist within the month (a whole empty week disqualifies it).
+  let emptyRun = 0
+  let anyPlanned = false
+  for (let d = monthStart; d <= monthEnd; d = addDaysIso(d, 1)) {
+    const day = dayOf(d)
+    if (day.planned === 0) {
+      emptyRun++
+      if (emptyRun >= 7) return false // 7+ consecutive empty days → not perfect
+      continue
     }
-    if (mon === mon1) break
+    emptyRun = 0
+    anyPlanned = true
+    if (day.done === 0) return false // a planned day with no done event → not perfect
   }
-  return anyPlannedInMonth
+  return anyPlanned
 }
 
 /** The growing milestone path: 100, 250, 500, 1000, 1500, 2500, 4000, then +2000 forever. */

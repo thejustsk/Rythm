@@ -3,7 +3,7 @@ import { useCoins } from '@/state/coins'
 import { useMilestones } from '@/state/milestones'
 import { useToasts } from '@/state/toasts'
 import { fmtCoins, streakMilestoneReward, streakWindow } from '@/lib/gamification'
-import { computeOccurrences } from '@/engine/occurrences'
+import { computeOccurrences, parseLocal } from '@/engine/occurrences'
 import { addDays, startOfDay, isoDate } from '@/engine/recurrence'
 import { perfectWeekCheck, perfectMonthCheck } from '../../../main/gamifyCore'
 import { useData } from '@/state/store'
@@ -21,7 +21,8 @@ function StreakMonth({
   onMonth,
   dayMap,
   perfectWeeks,
-  perfectMonth
+  perfectMonth,
+  coverUpTo
 }: {
   month: Date
   onMonth: (m: Date) => void
@@ -31,6 +32,10 @@ function StreakMonth({
   /** 'YYYY-MM' when the displayed month is a PERFECT month (golden dots,
    *  blue text on done days; no-event days keep their normal styling). */
   perfectMonth: string | null
+  /** v1.10.6: while the streak is ALIVE today, the current week's golden
+   *  cover runs only up to TODAY's dot (Mon..today) — never into days that
+   *  haven't happened yet. */
+  coverUpTo: string | null
 }) {
   const today = startOfDay(new Date())
   const first = new Date(month.getFullYear(), month.getMonth(), 1)
@@ -60,9 +65,15 @@ function StreakMonth({
       <div className="streak-month-grid">
         {rows.map((row, r) => {
           const weekMon = isoDate(row[0])
+          const weekEnd = isoDate(row[6])
           const wkPerfect = perfectWeeks.has(weekMon)
+          const rowCover = !!coverUpTo && weekMon <= coverUpTo && coverUpTo <= weekEnd
           return (
-            <div key={r} className={`streak-row${wkPerfect ? ' perfect-wk' : ''}`} title={wkPerfect ? 'Perfect week 🏆' : undefined}>
+            <div
+              key={r}
+              className={`streak-row${wkPerfect ? ' perfect-wk' : ''}${rowCover ? ' perfect-up' : ''}`}
+              title={wkPerfect ? 'Perfect week 🏆' : rowCover ? 'Perfect so far — keep it up!' : undefined}
+            >
               {row.map((d, i) => {
                 const iso = isoDate(d)
                 const status = dayMap.get(iso) ?? 'none'
@@ -72,11 +83,14 @@ function StreakMonth({
                 // perfect month: done dates get a GOLDEN dot with blue text;
                 // no-event days keep their normal styling
                 const perfectM = isPerfectMonth && status === 'done' ? ' perfect-m' : ''
+                // v1.10.6: golden cover Mon..today on the current week while
+                // the streak is alive — the row never wears it beyond today
+                const covered = rowCover && !!coverUpTo && iso <= coverUpTo
                 return (
                   <span
                     key={i}
-                    className={`streak-day ${status}${perfectM}${isToday ? ' today' : ''}${other ? ' other' : ''}${future ? ' future' : ''}`}
-                    title={`${iso}${status === 'done' ? ' — done ✓' : status === 'missed' ? ' — missed ✗' : ' — no events'}${wkPerfect ? ' (perfect week)' : ''}`}
+                    className={`streak-day ${status}${perfectM}${isToday ? ' today' : ''}${other ? ' other' : ''}${future ? ' future' : ''}${covered ? ' cover' : ''}`}
+                    title={`${iso}${status === 'done' ? ' — done ✓' : status === 'missed' ? ' — missed ✗' : ' — no events'}${wkPerfect ? ' (perfect week)' : covered ? ' (perfect so far)' : ''}`}
                   >
                     {d.getDate()}
                   </span>
@@ -281,8 +295,15 @@ export default function CoinsView() {
     void useData.getState().load() // pick up any direct-DB changes (streak calendar etc.)
     setIntro(true)
     setIntroSkipped(false)
-    // streak bonuses (catch-up): check whenever the Coins tab opens, so
-    // perfect-week/month + streak-milestone coins land while the user watches
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // STREAK BONUSES (catch-up): run once the intro has dismissed (or been
+  // skipped), so reward toasts are actually VISIBLE — fired during the 5.3s
+  // intro they would expire unseen. All three IPCs are idempotent: a reward
+  // already paid never pays twice.
+  useEffect(() => {
+    if (intro) return
     void window.api.coins.perfectMonth().then((r) => {
       if (r.award) {
         toasts.push({ message: `🗓️ Perfect month — +${r.amount} 🪙`, kind: 'info', duration: 5000 })
@@ -302,7 +323,7 @@ export default function CoinsView() {
       }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [intro])
 
   // ---- "Last 7 days" box width == KPI card width, EXACTLY (any machine) ----
   // Left panel now pins 3 KPI cards; the chart column matches one card exactly.
@@ -381,10 +402,16 @@ export default function CoinsView() {
   // ---- streak calendar: last 12 weeks ----
   const cal = useMemo(() => {
     const today = startOfDay(new Date())
-    // the Monday of ~12 weeks ago — the week rows must align to real Mon–Sun
-    const rawStart = addDays(today, -11 * 7)
+    // FULL-HISTORY window: from the Monday of the EARLIEST event (clamped to
+    // the last 400 days) to today+1 — so the streak calendar styles every
+    // navigable month, not just the last ~12 weeks.
+    let rawStart = addDays(today, -1999)
+    for (const e of events) {
+      const t = parseLocal(e.startLocal)
+      if (t.getTime() < rawStart.getTime()) rawStart = startOfDay(t)
+    }
     const rawDow = rawStart.getDay()
-    const gridStart = addDays(rawStart, rawDow === 0 ? -6 : 1 - rawDow)
+    const gridStart = addDays(rawStart, rawDow === 0 ? -6 : 1 - rawDow) // Monday
     const raw = new Map<string, { planned: number; done: number }>()
     const occs = computeOccurrences(events, gridStart, addDays(today, 1))
     for (const o of occs) {
@@ -397,16 +424,15 @@ export default function CoinsView() {
     const dayMap = new Map<string, 'done' | 'missed' | 'none'>()
     for (const [iso, info] of raw) dayMap.set(iso, info.done > 0 ? 'done' : info.planned > 0 ? 'missed' : 'none')
     const cells: Array<{ date: string; planned: number; done: number; future: boolean }> = []
-    for (let i = 0; i < 84; i++) {
-      const d = addDays(gridStart, i)
+    for (let d = gridStart; d.getTime() <= today.getTime(); d = addDays(d, 1)) {
       const iso = isoDate(d)
       const info = raw.get(iso)
-      cells.push({ date: iso, planned: info?.planned ?? 0, done: info?.done ?? 0, future: d.getTime() > today.getTime() })
+      cells.push({ date: iso, planned: info?.planned ?? 0, done: info?.done ?? 0, future: false })
     }
     // current streak (done days count, no-event days skip, missed breaks;
     // TODAY with pending plans is a grace day and never breaks the streak)
     let streak = 0
-    for (let i = 0; i < 400; i++) {
+    for (let i = 0; i < 2000; i++) {
       const d = isoDate(addDays(today, -i))
       const info = raw.get(d)
       if (info && info.done > 0) {
@@ -415,39 +441,91 @@ export default function CoinsView() {
       }
       if (info && info.planned > 0 && i > 0) break
     }
-    // PERFECT WEEKS (cup 5): Mon–Sun rows where every planned day is fully
-    // done and the week has ≥1 planned day — same rule as the bonus engine
+    // PERFECT WEEKS (cup 5): every Mon–Sun row in the window. A week earns the
+    // FULL golden border only once it has ENDED (Sunday <= today) — the
+    // in-progress week must never wear it early, even when its future days
+    // happen to be empty. While the streak is ALIVE today, the current week
+    // instead gets the partial cover Mon..today (v1.10.6).
     const perfectWeeks = new Set<string>()
-    for (let w = 0; w < 12; w++) {
-      const mon = isoDate(addDays(gridStart, w * 7))
+    let coverUpTo: string | null = null
+    const todayIso = isoDate(today)
+    for (let mon = gridStart; mon.getTime() <= today.getTime(); mon = addDays(mon, 7)) {
       const days = [0, 1, 2, 3, 4, 5, 6].map((i) => {
-        const iso = isoDate(addDays(gridStart, w * 7 + i))
+        const iso = isoDate(addDays(mon, i))
         const info = raw.get(iso)
         return { planned: info?.planned ?? 0, done: info?.done ?? 0 }
       })
-      if (perfectWeekCheck(days)) perfectWeeks.add(mon)
-    }
-    // PERFECT MONTHS (cup 5): all days of the month lie in perfect weeks
-    const perfectMonths = new Set<string>()
-    for (let m = 0; m < 6; m++) {
-      const first = new Date(today.getFullYear(), today.getMonth() - m, 1)
-      const last = new Date(first.getFullYear(), first.getMonth() + 1, 0)
-      const start = isoDate(first)
-      const end = isoDate(last)
-      const weekDaysFor = (monIso: string) =>
-        [0, 1, 2, 3, 4, 5, 6].map((i) => {
-          const iso = isoDate(addDays(new Date(monIso + 'T00:00:00'), i))
+      const monIso = isoDate(mon)
+      const wkEnd = isoDate(addDays(mon, 6))
+      const completed = wkEnd <= todayIso
+      if (perfectWeekCheck(days) && completed) {
+        perfectWeeks.add(monIso)
+      } else if (streak > 0 && !completed && todayIso >= monIso && todayIso <= wkEnd) {
+        // CURRENT week (in progress) with the streak alive: the golden cover
+        // runs Mon..today only — every day Mon..today must be resolved (rest
+        // day or >=1 done) with at least one planned day in the range.
+        let okUpToToday = true
+        let plannedUpTo = false
+        for (let i = 0; i < 7; i++) {
+          const iso = isoDate(addDays(mon, i))
+          if (iso > todayIso) break
           const info = raw.get(iso)
-          return { planned: info?.planned ?? 0, done: info?.done ?? 0 }
-        })
-      if (perfectMonthCheck(start, end, weekDaysFor)) perfectMonths.add(start.slice(0, 7))
+          if (info && info.planned > 0) {
+            plannedUpTo = true
+            if (info.done === 0) {
+              okUpToToday = false
+              break
+            }
+          }
+        }
+        if (okUpToToday && plannedUpTo) coverUpTo = todayIso
+      }
     }
-    return { cells, streak, dayMap, perfectWeeks, perfectMonths }
+    // PERFECT MONTHS (v1.10.5): every day of the month is a rest day or has
+    // >=1 done, AND no block of 7+ consecutive no-event days exists
+    const perfectMonths = new Set<string>()
+    const m0 = new Date(gridStart.getFullYear(), gridStart.getMonth(), 1)
+    for (let m = m0; m.getTime() <= today.getTime(); m = new Date(m.getFullYear(), m.getMonth() + 1, 1)) {
+      const start = isoDate(m)
+      const end = isoDate(new Date(m.getFullYear(), m.getMonth() + 1, 0))
+      const dayOf = (iso: string) => {
+        const info = raw.get(iso)
+        return { planned: info?.planned ?? 0, done: info?.done ?? 0 }
+      }
+      if (perfectMonthCheck(start, end, dayOf)) perfectMonths.add(start.slice(0, 7))
+    }
+    return { cells, streak, dayMap, perfectWeeks, perfectMonths, coverUpTo }
   }, [events])
 
   // ---- best streak: current > stored → persist (fixes "best shows 0d") ----
   useEffect(() => {
     void useCoins.getState().updateBestStreak(cal.streak)
+  }, [cal.streak])
+
+  // STREAK-GOAL REWARDS (v1.10.5): whenever the visible streak changes, run
+  // the bonus checks so perfect-week/month + streak-milestone coins land in
+  // the ledger + toaster immediately — even without a save/relaunch.
+  useEffect(() => {
+    if (intro || !cal.streak) return
+    void window.api.coins.perfectWeek().then((r) => {
+      if (r.award) {
+        toasts.push({ message: `🏆 Perfect week — +${r.amount} 🪙`, kind: 'info', duration: 4500 })
+        void coins.refresh()
+      }
+    })
+    void window.api.coins.perfectMonth().then((r) => {
+      if (r.award) {
+        toasts.push({ message: `🗓️ Perfect month — +${r.amount} 🪙`, kind: 'info', duration: 5000 })
+        void coins.refresh()
+      }
+    })
+    void window.api.coins.streakMilestone().then((r) => {
+      if (r.award) {
+        toasts.push({ message: `🎯 ${r.level}-day streak milestone — +${r.amount} 🪙`, kind: 'info', duration: 4500 })
+        void coins.refresh()
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cal.streak])
 
   // ---- reward-time popup: set rewards BEFORE a level is reached.
@@ -545,7 +623,7 @@ export default function CoinsView() {
     <div className={`coins-view${introSkipped ? ' intro-skipped' : ''}`}>
       {!systemOn && (
         <div className="coins-off-banner">
-          🪙 <b>Coins system is disabled.</b> Click the <b>Coins</b> pill in the header to turn it back on — your balance and progress are safe.
+          🪙 <b>Rhythm Coins is off.</b> Click the <b>Rhythm Coins</b> pill in the header to turn it back on — your balance and progress are safe.
         </div>
       )}
       {intro && (
@@ -619,12 +697,15 @@ export default function CoinsView() {
           </div>
 
           <div className="ins-panel">
-            <div className="ins-panel-title">Ledger</div>
+            <div className="ins-panel-title">
+              Ledger
+              {coins.txs.length > 0 && <span className="ledger-count">{coins.txs.length} entries</span>}
+            </div>
             {coins.txs.length === 0 ? (
               <div className="ins-empty">No transactions yet</div>
             ) : (
               <div className="ledger">
-                {coins.txs.slice(0, 20).map((t) => (
+                {coins.txs.map((t) => (
                   <div key={t.id} className={`ledger-row ${t.type}`}>
                     <span className="ledger-date">{t.ts.slice(0, 10)}</span>
                     <span className="ledger-reason">{t.reason}</span>
@@ -666,11 +747,15 @@ export default function CoinsView() {
               dayMap={cal.dayMap}
               perfectWeeks={cal.perfectWeeks}
               perfectMonth={cal.perfectMonths.has(String(streakMonth.getFullYear()) + '-' + String(streakMonth.getMonth() + 1).padStart(2, '0')) ? String(streakMonth.getFullYear()) + '-' + String(streakMonth.getMonth() + 1).padStart(2, '0') : null}
+              coverUpTo={cal.coverUpTo}
             />
             <div className="streak-legend">
               <span><i className="sl done" /> done</span>
               <span><i className="sl none" /> no events (streak continues)</span>
               <span><i className="sl missed" /> missed (streak ends)</span>
+              <span><i className="sl perfect-wk" /> perfect week</span>
+              <span><i className="sl perfect-up" /> perfect so far</span>
+              <span><i className="sl perfect-m" /> perfect month</span>
             </div>
           </div>
 

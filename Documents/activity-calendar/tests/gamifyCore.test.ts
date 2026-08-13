@@ -73,27 +73,41 @@ describe('perfectWeekCheck (cup 5: every planned day has >=1 done, >=1 planned d
   })
 })
 
-describe('perfectMonthCheck (cup 5: every day of the month in a perfect week)', () => {
-  it('a month fully covered by perfect weeks is a perfect month', () => {
-    // June 2026: starts Monday 1, ends Tuesday 30 → weeks Mon1–Sun7, Mon8–Sun14,
-    // Mon15–Sun21, Mon22–Sun28, Mon29–Sun Jul 5 (boundary includes July days)
-    const weekDays = (mon: string) => {
-      const all = [0, 1, 2, 3, 4, 5, 6].map((i) => ({ planned: 1, done: 1 }))
-      // make July 1-5 a rest stretch inside the boundary week — still perfect
-      return all.map((d) => d)
-    }
-    expect(perfectMonthCheck('2026-06-01', '2026-06-30', weekDays)).toBe(true)
+describe('perfectMonthCheck (v1.10.5: every day done-or-rest, no 7+ empty block)', () => {
+  const dayOf = (map: Record<string, { planned: number; done: number }>) => (iso: string) => map[iso] ?? { planned: 0, done: 0 }
+  const allDone = (from: string, to: string): Record<string, { planned: number; done: number }> => {
+    const m: Record<string, { planned: number; done: number }> = {}
+    for (let d = from; d <= to; d = addDaysIso(d, 1)) m[d] = { planned: 1, done: 1 }
+    return m
+  }
+  it('every day done (or rest) with no 7+ empty block → perfect', () => {
+    const map = allDone('2026-06-01', '2026-06-30')
+    map['2026-06-10'] = { planned: 0, done: 0 } // single rest day → fine
+    expect(perfectMonthCheck('2026-06-01', '2026-06-30', dayOf(map))).toBe(true)
   })
-  it('a month with a non-perfect week fails', () => {
-    const weekDays = (mon: string) => {
-      if (mon === '2026-06-15') return [0, 1, 2, 3, 4, 5, 6].map((i) => ({ planned: 1, done: i === 0 ? 0 : 1 }))
-      return [0, 1, 2, 3, 4, 5, 6].map((i) => ({ planned: 1, done: 1 }))
-    }
-    expect(perfectMonthCheck('2026-06-01', '2026-06-30', weekDays)).toBe(false)
+  it('a planned day with ZERO done fails', () => {
+    const map = allDone('2026-06-01', '2026-06-30')
+    map['2026-06-15'] = { planned: 2, done: 0 }
+    expect(perfectMonthCheck('2026-06-01', '2026-06-30', dayOf(map))).toBe(false)
   })
-  it('a month with NO planned days fails (idle month)', () => {
-    const weekDays = () => [0, 1, 2, 3, 4, 5, 6].map((i) => ({ planned: 0, done: 0 }))
-    expect(perfectMonthCheck('2026-06-01', '2026-06-30', weekDays)).toBe(false)
+  it('a planned day with SOME done (1 of 2) passes (streak logic)', () => {
+    const map = allDone('2026-06-01', '2026-06-30')
+    map['2026-06-15'] = { planned: 2, done: 1 }
+    expect(perfectMonthCheck('2026-06-01', '2026-06-30', dayOf(map))).toBe(true)
+  })
+  it('a block of 7+ consecutive no-event days FAILS the month', () => {
+    const map = allDone('2026-06-01', '2026-06-30')
+    for (let i = 0; i < 7; i++) map[addDaysIso('2026-06-10', i)] = { planned: 0, done: 0 } // Jun 10-16 empty
+    expect(perfectMonthCheck('2026-06-01', '2026-06-30', dayOf(map))).toBe(false)
+  })
+  it('a short empty stretch (6 days) still passes', () => {
+    const map = allDone('2026-06-01', '2026-06-30')
+    for (let i = 0; i < 6; i++) map[addDaysIso('2026-06-10', i)] = { planned: 0, done: 0 } // Jun 10-15 empty
+    expect(perfectMonthCheck('2026-06-01', '2026-06-30', dayOf(map))).toBe(true)
+  })
+  it('a fully idle month fails', () => {
+    const map: Record<string, { planned: number; done: number }> = {}
+    expect(perfectMonthCheck('2026-06-01', '2026-06-30', dayOf(map))).toBe(false)
   })
 })
 

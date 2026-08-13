@@ -111,10 +111,19 @@ describe('computeInsights', () => {
     expect(day?.doneMin).toBe(60)
   })
 
-  it('builds a 112-cell heatmap ending today', () => {
+  it('builds a heatmap of AT LEAST 112 cells (16+ weeks) ending today', () => {
     const ins = computeInsights([], [], new Set(), range('2026-08-01', 30).start, range('2026-08-01', 30).end)
-    expect(ins.heatmap).toHaveLength(112)
+    expect(ins.heatmap.length).toBeGreaterThanOrEqual(112)
     expect(isoD(new Date())).toBe(ins.heatmap[ins.heatmap.length - 1].date)
+  })
+  it('heatmap follows the selected period (month → the month window)', () => {
+    const start = new Date('2026-08-01T00:00:00')
+    const end = new Date('2026-08-15T00:00:00')
+    const ins = computeInsights([], [], new Set(), start, end, null, 'month')
+    // window: Monday on/before Aug 1 → Aug 15
+    expect(ins.heatmap.length).toBeGreaterThanOrEqual(15)
+    expect(ins.heatmap.length).toBeLessThanOrEqual(22)
+    expect(ins.heatmap[0].date).toBe('2026-07-27') // Monday before Aug 1
   })
 
   it('computes a completion streak over consecutive done days', () => {

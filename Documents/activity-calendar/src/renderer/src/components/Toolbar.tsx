@@ -7,7 +7,7 @@ const VIEWS = [
   { id: 'month', label: 'Month' },
   { id: 'agenda', label: 'Agenda' },
   { id: 'insights', label: 'Insights' },
-  { id: 'coins', label: 'Coins' }
+  { id: 'coins', label: 'Rhythm Coins' }
 ] as const
 
 /** Tab icon for a view: coins get the coin (money-flip loop when the Coins tab
@@ -17,7 +17,7 @@ function SegIcon({ id, active }: { id: string; active: boolean }) {
   if (id === 'coins') {
     return (
       <span className="seg-coin">
-        <Coin size={16} flip={active} /> Coins
+        <Coin size={16} flip={active} /> Rhythm Coins
       </span>
     )
   }
@@ -43,13 +43,13 @@ export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
           {isCoins ? (
             <button
               className="premium-heading coins clickable"
-              title="Click to turn the coin system off/on"
+              title="Click to turn Rhythm Coins off/on"
               onClick={ui.openCoinSystemConfirm}
             >
               <span className="ph-icon">
                 <Coin size={20} roll />
               </span>
-              Coins
+              Rhythm Coins
             </button>
           ) : (
             <span className="premium-heading" title="Premium feature">
@@ -138,6 +138,6 @@ function titleFor(view: string, cursor: Date): string {
     return `${fmt(monday)} – ${fmt(sunday)}`
   }
   if (view === 'insights') return 'Insights'
-  if (view === 'coins') return 'Coins'
+  if (view === 'coins') return 'Rhythm Coins'
   return 'Agenda'
 }

@@ -62,10 +62,30 @@ function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
   if (process.env.AC_SCREENSHOT || process.env.AC_SMOKE) {
     win.webContents.once('did-finish-load', () => {
       // FX harness: fire the score-fx so a screenshot can capture it mid-flight
+      if (process.env.AC_PICKER) {
+        setTimeout(() => {
+          win.webContents
+            .executeJavaScript("(() => { const t = document.querySelector('.mm-title'); if (t) t.click(); return !!t })()")
+            .catch(() => {})
+        }, 700)
+      }
       if (process.env.AC_FX) {
         setTimeout(() => {
           win.webContents.executeJavaScript('window.__rhythmCoins2.fireScoreFx()').catch(() => {})
         }, 600)
+      }
+      if (process.env.AC_SCROLLTOP) {
+        const target = Number(process.env.AC_SCROLLTOP)
+        // fixed attempts (no infinite retry racing the capture)
+        for (const t of [600, 2000, 3400]) {
+          setTimeout(() => {
+            win.webContents
+              .executeJavaScript(
+                "(() => { const s = document.querySelector('.agenda-view'); if (s) s.scrollTop = " + target + "; return !!s })()"
+              )
+              .catch(() => {})
+          }, t)
+        }
       }
       setTimeout(async () => {
         try {
@@ -108,15 +128,108 @@ function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
                     text: m ? m.textContent : null
                   }
                 })(),
+                agendaTop: (() => {
+                  const card = document.querySelector('.agenda-view')
+                  if (!card) return null
+                  const cr = card.getBoundingClientRect()
+                  const titles = Array.from(document.querySelectorAll('.agenda-title')).map((t) => {
+                    const r = t.getBoundingClientRect()
+                    return { text: t.textContent, top: Math.round(r.top), h: Math.round(r.height), x: Math.round(r.left), w: Math.round(r.width), pos: getComputedStyle(t).position }
+                  })
+                  const probe = (() => { const el = document.elementFromPoint(cr.left + 60, cr.top + 12); return el ? el.className : 'none' })()
+                  const t0 = document.querySelector('.agenda-title')
+                  const cs = t0 ? getComputedStyle(t0) : null
+                  return {
+                    cardTop: Math.round(cr.top), titles, probe,
+                    ml: cs ? cs.marginLeft : '', mr: cs ? cs.marginRight : '',
+                    scrollTop: card ? Math.round(card.scrollTop) : -1,
+                    grp: (() => {
+                      const g = document.querySelector('.agenda-group')
+                      if (!g) return null
+                      const r = g.getBoundingClientRect()
+                      const gc = getComputedStyle(g)
+                      g.style.marginLeft = '-18px'
+                      const r2 = g.getBoundingClientRect()
+                      g.style.marginLeft = ''
+                      const par = g.parentElement
+                      return { x: Math.round(r.left), w: Math.round(r.width), ml: gc.marginLeft, after18: Math.round(r2.left), parent: par ? par.className : 'none' }
+                    })()
+                  }
+                  return { cardTop: Math.round(cr.top), titles, probe }
+                })(),
                 streakCal: (() => {
+                  const cov = document.querySelector('.streak-day.cover')
+                  const ccs = cov ? getComputedStyle(cov) : null
+                  const anc = []
+                  let el = cov ? cov.parentElement : null
+                  while (el && anc.length < 8) {
+                    const cs = getComputedStyle(el)
+                    const r = el.getBoundingClientRect()
+                    anc.push({ cls: String(el.className).slice(0, 40), transform: cs.transform, opacity: cs.opacity, filter: cs.filter, willChange: cs.willChange, x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) })
+                    el = el.parentElement
+                  }
+                  const cr = cov ? cov.getBoundingClientRect() : null
                   return {
                     rows: Array.from(document.querySelectorAll('.streak-row')).map((r) => ({
                       cls: r.className,
                       done: Array.from(r.querySelectorAll('.streak-day.done')).length,
                       none: Array.from(r.querySelectorAll('.streak-day.none')).length
                     })),
-                    perfectM: document.querySelectorAll('.streak-day.perfect-m').length
+                    perfectM: document.querySelectorAll('.streak-day.perfect-m').length,
+                    coverStyle: ccs ? { outline: ccs.outline, offset: ccs.outlineOffset, shadow: ccs.boxShadow, cls: cov.className, transform: ccs.transform, opacity: ccs.opacity, filter: ccs.filter, width: ccs.width, height: ccs.height, rect: cr ? { x: Math.round(cr.x), y: Math.round(cr.y), w: Math.round(cr.width), h: Math.round(cr.height) } : null } : null,
+                    ancestors: anc,
+                    dots: Array.from(document.querySelectorAll('.streak-row .streak-day')).map((d) => {
+                      const r = d.getBoundingClientRect()
+                      return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), cls: d.className, txt: d.textContent }
+                    })
                   }
+                })(),
+                stickytest: (() => {
+                  const v = document.querySelector('.agenda-view')
+                  if (!v) return null
+                  const out = []
+                  for (const pos of [100, 250, 400, 550, 700]) {
+                    v.scrollTop = pos
+                    const t = document.querySelector('.agenda-title')
+                    const r = t ? Math.round(t.getBoundingClientRect().top) : -1
+                    out.push({ pos, titleTop: r, scrollTop: Math.round(v.scrollTop) })
+                  }
+                  v.scrollTop = 700
+                  return out
+                })(),
+                ancestors: (() => {
+                  const t = document.querySelector('.agenda-title')
+                  if (!t) return []
+                  const out = []
+                  let el = t.parentElement
+                  while (el && out.length < 8) {
+                    const cs = getComputedStyle(el)
+                    const r = el.getBoundingClientRect()
+                    out.push({ cls: el.className, top: Math.round(r.top), overflowY: cs.overflowY, position: cs.position, maxH: cs.maxHeight })
+                    el = el.parentElement
+                  }
+                  return out
+                })(),
+                overlapprobe: (() => {
+                  const sb = document.querySelector('.sidebar')
+                  const tc = document.querySelector('.today-card')
+                  const tree = document.querySelector('.label-tree')
+                  const rows = Array.from(document.querySelectorAll('.label-row'))
+                  const sr = sb ? sb.getBoundingClientRect() : null
+                  const tr = tc ? tc.getBoundingClientRect() : null
+                  const last = rows.length ? rows[rows.length - 1].getBoundingClientRect() : null
+                  return {
+                    sidebar: sr ? { top: Math.round(sr.top), bottom: Math.round(sr.bottom) } : null,
+                    today: tr ? { top: Math.round(tr.top), bottom: Math.round(tr.bottom) } : null,
+                    lastLabel: last ? { bottom: Math.round(last.bottom) } : null,
+                    treeScroll: tree ? { ch: tree.clientHeight, sh: tree.scrollHeight } : null,
+                    labelRows: rows.length
+                  }
+                })(),
+                streakNum: (() => {
+                  const c = document.querySelector('.streak-kpi')
+                  const ms = window.__rhythmMilestones ? 0 : 0
+                  return { kpi: c ? c.textContent : '' }
                 })(),
                 coin3d: (() => {
                   const coin = document.querySelector('.premium-heading .ph-icon .rhythm-coin')
@@ -141,6 +254,8 @@ function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
             console.log('[domdump] saved to', process.env.AC_DOM_DUMP)
           }
           if (process.env.AC_SCREENSHOT !== 'none') {
+            win.webContents.invalidate() // force a full repaint before capture
+            await new Promise((r) => setTimeout(r, 250))
             const image = await win.webContents.capturePage()
             fs.writeFileSync(process.env.AC_SCREENSHOT!, image.toPNG())
             console.log('[screenshot] saved to', process.env.AC_SCREENSHOT)

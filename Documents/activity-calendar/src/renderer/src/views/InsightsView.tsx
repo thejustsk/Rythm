@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useData, useUi, hiddenLabelIds } from '@/state/store'
 import { computeInsights, fmtH, isoD } from '@/lib/insights'
 import { startOfDay, addDays, isoDate } from '@/engine/recurrence'
@@ -26,19 +26,28 @@ function rangeFor(
   period: Period,
   events: { startLocal: string }[],
   customFrom: string,
-  customTo: string
+  customTo: string,
+  alt: boolean
 ): { start: Date; end: Date } {
   const today = startOfDay(new Date())
   if (period === 'week') {
     const dow = today.getDay()
     const mon = addDays(today, dow === 0 ? -6 : 1 - dow)
+    if (alt) return { start: addDays(mon, -7), end: mon } // LAST week (Mon–Sun)
     return { start: mon, end: addDays(mon, 7) }
   }
   if (period === 'month') {
-    return { start: new Date(today.getFullYear(), today.getMonth(), 1), end: new Date(today.getFullYear(), today.getMonth() + 1, 1) }
+    const first = new Date(today.getFullYear(), today.getMonth(), 1)
+    if (alt) {
+      const prev = new Date(today.getFullYear(), today.getMonth() - 1, 1)
+      return { start: prev, end: first } // LAST month
+    }
+    return { start: first, end: new Date(today.getFullYear(), today.getMonth() + 1, 1) }
   }
   if (period === 'year') {
-    return { start: new Date(today.getFullYear(), 0, 1), end: new Date(today.getFullYear() + 1, 0, 1) }
+    const y0 = new Date(today.getFullYear(), 0, 1)
+    if (alt) return { start: new Date(today.getFullYear() - 1, 0, 1), end: y0 } // LAST year
+    return { start: y0, end: new Date(today.getFullYear() + 1, 0, 1) }
   }
   if (period === 'custom' && customFrom && customTo) {
     const from = new Date(customFrom + 'T00:00:00')
@@ -62,21 +71,48 @@ export default function InsightsView() {
   const { events, labels } = useData()
   const ui = useUi()
   const [period, setPeriod] = useState<Period>('week')
+  const [periodAlt, setPeriodAlt] = useState(false)
   const [customFrom, setCustomFrom] = useState(todayIso)
   const [customTo, setCustomTo] = useState(todayIso)
   const [focusTop, setFocusTop] = useState<string | null>(null)
   const [expandedDonut, setExpandedDonut] = useState<string | null>(null)
   const [expandedComp, setExpandedComp] = useState<string | null>(null)
+  const heatWrapRef = useRef<HTMLDivElement>(null)
   const [faces, setFaces] = useState<number[]>([0, 0, 0, 0])
   const [bestStreak, setBestStreak] = useState(0)
+  const [heatOpen, setHeatOpen] = useState(false)
+  const [heatT1, setHeatT1] = useState(2) // hours: low → medium boundary
+  const [heatT2, setHeatT2] = useState(5) // hours: medium → high boundary
+
+  useEffect(() => {
+    void (async () => {
+      const [t1, t2] = await Promise.all([window.api.settings.get('heatT1'), window.api.settings.get('heatT2')])
+      if (t1) setHeatT1(parseInt(t1, 10) || 2)
+      if (t2) setHeatT2(parseInt(t2, 10) || 5)
+    })()
+  }, [])
+  const saveHeat = async () => {
+    const a = Math.max(1, heatT1)
+    const b = Math.max(a + 1, heatT2)
+    setHeatT1(a); setHeatT2(b)
+    await window.api.settings.set('heatT1', String(a))
+    await window.api.settings.set('heatT2', String(b))
+    setHeatOpen(false)
+  }
 
   const hidden = useMemo(() => hiddenLabelIds(labels, ui.hiddenLabels), [labels, ui.hiddenLabels])
   const parents = useMemo(() => labels.filter((l) => !l.parentId), [labels])
 
   const ins = useMemo(() => {
-    const { start, end } = rangeFor(period, events, customFrom, customTo)
-    return computeInsights(events, labels, hidden, start, end, focusTop)
-  }, [events, labels, hidden, period, customFrom, customTo, focusTop])
+    const { start, end } = rangeFor(period, events, customFrom, customTo, periodAlt)
+    return computeInsights(events, labels, hidden, start, end, focusTop, period)
+  }, [events, labels, hidden, period, periodAlt, customFrom, customTo, focusTop])
+
+  // when the heatmap data changes, scroll to the LATEST weeks (right end)
+  useEffect(() => {
+    const w = heatWrapRef.current
+    if (w) w.scrollLeft = w.scrollWidth
+  }, [ins.heatmap.length])
 
   // persist best streak (all-time high) + load it once
   useEffect(() => {
@@ -129,6 +165,21 @@ export default function InsightsView() {
     return buckets.map((b) => ({ label: new Date(b.label + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), plannedMin: b.plannedMin, doneMin: b.doneMin }))
   }, [ins.perDay, period])
 
+  // heatmap week columns (Mon-start weeks, for horizontal scrolling)
+  const heatWeeks = useMemo(() => {
+    const weeks: Array<Array<{ date: string; min: number }>> = []
+    let cur: Array<{ date: string; min: number }> = []
+    for (const c of ins.heatmap) {
+      cur.push(c)
+      if (cur.length === 7) {
+        weeks.push(cur)
+        cur = []
+      }
+    }
+    if (cur.length) weeks.push(cur)
+    return weeks
+  }, [ins.heatmap])
+
   const maxBar = Math.max(1, ...barBuckets.map((b) => b.plannedMin))
   const maxHour = Math.max(1, ...ins.hourDist)
   const maxWd = Math.max(1, ...ins.weekdayDist)
@@ -167,8 +218,9 @@ export default function InsightsView() {
     // THEN resume the 5s cascade right → left
     setFaces([0, 0, 0, 0])
     const roll = () => {
+      // dice cascade LEFT → RIGHT (card 1 first, card 4 last)
       for (let k = 0; k < 4; k++) {
-        const ci = 3 - k
+        const ci = k
         const len = kpiFaces[ci].length
         window.setTimeout(() => {
           setFaces((f) => ({ ...f, [ci]: ((f[ci] ?? 0) + 1) % len }))
@@ -196,11 +248,37 @@ export default function InsightsView() {
       <div className="ins-head">
         <div className="ins-top">
           <div className="segmented accent ins-period">
-            {PERIODS.map((p) => (
-              <button key={p.id} className={`seg-btn${period === p.id ? ' active' : ''}`} onClick={() => setPeriod(p.id)}>
-                {p.label}
-              </button>
-            ))}
+            {PERIODS.map((p) => {
+              const isActive = period === p.id
+              const isAlt = isActive && periodAlt && p.id !== 'all' && p.id !== 'custom'
+              return (
+                <button
+                  key={p.id}
+                  className={`seg-btn${isActive ? ' active' : ''}${isAlt ? ' alt' : ''}`}
+                  title={p.id === 'week' || p.id === 'month' || p.id === 'year' ? 'Click again for the previous period' : undefined}
+                  onClick={() => {
+                    if (isActive && (p.id === 'week' || p.id === 'month' || p.id === 'year')) {
+                      // toggle amber: previous period (only if data exists)
+                      const prev = rangeFor(p.id, events, customFrom, customTo, !periodAlt)
+                      const hasData = events.some((e) => {
+                        const t = parseLocal(e.startLocal).getTime()
+                        return t >= prev.start.getTime() && t < prev.end.getTime()
+                      })
+                      if (!periodAlt) {
+                        if (hasData) setPeriodAlt(true)
+                      } else {
+                        setPeriodAlt(false)
+                      }
+                    } else if (!isActive) {
+                      setPeriod(p.id)
+                      setPeriodAlt(false)
+                    }
+                  }}
+                >
+                  {isAlt ? p.label.replace('This ', 'Last ') : p.label}
+                </button>
+              )
+            })}
           </div>
           {period === 'custom' && (
             <div className="ins-custom-range">
@@ -395,26 +473,64 @@ export default function InsightsView() {
           </div>
 
           <div className="ins-panel wide">
-            <div className="ins-panel-title">Last 16 weeks of activity</div>
-            <div className="heatmap">
-              {ins.heatmap.map((c, i) => {
-                const intensity = c.min === 0 ? 0 : 0.25 + Math.min(0.75, c.min / 240)
+            <div className="ins-panel-title">
+              <button className="heat-head-btn" title="Change the hour thresholds for the 3 colours" onClick={() => setHeatOpen((o) => !o)}>
+                Activity heatmap ⚙
+              </button>
+              {heatOpen && (() => {
+                const invalid = !(heatT1 >= 1 && heatT2 > heatT1)
                 return (
-                  <span
-                    key={i}
-                    className="heat-cell"
-                    style={c.min === 0 ? undefined : { background: `rgba(10,132,255,${intensity})` }}
-                    title={`${c.date}: ${fmtH(c.min)} planned`}
-                  />
+                  <div className="heat-pop">
+                    <div className="heat-pop-row">
+                      <span>Low → Medium above</span>
+                      <input type="number" min={1} value={heatT1} onChange={(e) => setHeatT1(parseInt(e.target.value, 10) || 1)} /> h
+                    </div>
+                    <div className="heat-pop-row">
+                      <span>Medium → High above</span>
+                      <input type="number" min={1} value={heatT2} onChange={(e) => setHeatT2(parseInt(e.target.value, 10) || 1)} /> h
+                    </div>
+                    {invalid && (
+                      <div className="heat-pop-err">Low → Medium must be less than Medium → High (and both ≥ 1).</div>
+                    )}
+                    <div className="heat-pop-actions">
+                      <button className="btn sm" onClick={() => setHeatOpen(false)}>Cancel</button>
+                      <button className="btn sm primary" disabled={invalid} onClick={() => void saveHeat()}>Save</button>
+                    </div>
+                  </div>
                 )
-              })}
+              })()}
+            </div>
+            <div className="heatmap-wrap" ref={heatWrapRef}>
+              <div className="heatmap">
+                {heatWeeks.map((wk, wi) => (
+                  <div key={wi} className="heat-week">
+                    {wk.map((c) => {
+                      const h = c.min / 60
+                      let bg: string | undefined
+                      if (c.min > 0) {
+                        if (h <= heatT1) bg = 'rgba(10,132,255,.32)'
+                        else if (h <= heatT2) bg = 'rgba(10,132,255,.62)'
+                        else bg = 'rgba(10,132,255,.95)'
+                      }
+                      return (
+                        <span
+                          key={c.date}
+                          className="heat-cell"
+                          style={bg ? { background: bg } : undefined}
+                          title={`${c.date}: ${fmtH(c.min)} planned`}
+                        />
+                      )
+                    })}
+                  </div>
+                ))}
+              </div>
             </div>
             <div className="ins-axis heat-legend">
               <span>Less</span>
-              <span className="heat-cell" style={{ background: 'rgba(10,132,255,.3)' }} />
-              <span className="heat-cell" style={{ background: 'rgba(10,132,255,.6)' }} />
+              <span className="heat-cell" style={{ background: 'rgba(10,132,255,.32)' }} />
+              <span className="heat-cell" style={{ background: 'rgba(10,132,255,.62)' }} />
               <span className="heat-cell" style={{ background: 'rgba(10,132,255,.95)' }} />
-              <span>More</span>
+              <span>More · ≤{heatT1}h · ≤{heatT2}h</span>
             </div>
           </div>
 

@@ -48,23 +48,53 @@ function occurrencesOn(db: Db, dateIso: string): Array<{ eventId: string; status
 }
 
 /** Current streak: walk back from today; done days count, no-event days skip,
- *  event-without-done breaks. */
+ *  event-without-done breaks. Builds a per-day map ONCE (fast even with years
+ *  of history — the old per-day scan hung with >500 days). */
 function computeStreak(db: Db): number {
   const today = todayIso()
+  const gDay = new Map<string, { planned: number; done: number }>()
+  let earliest: string | null = null
+  const rows = db.prepare('SELECT * FROM events').all() as any[]
+  for (const e of rows) {
+    if (e.parent_id) continue
+    const exdates = new Set(JSON.parse(e.exdates || '[]'))
+    const ovs = db.prepare('SELECT origin_date, status FROM events WHERE parent_id = ?').all(e.id) as any[]
+    const ovMap = new Map(ovs.map((o) => [o.origin_date, o.status]))
+    const add = (iso: string, status: string) => {
+      const g = gDay.get(iso) ?? { planned: 0, done: 0 }
+      g.planned++
+      if (status === 'done') g.done++
+      gDay.set(iso, g)
+      if (!earliest || iso < earliest) earliest = iso
+    }
+    if (e.rrule) {
+      const rule = parseRRule(e.rrule)
+      if (!rule) continue
+      for (const day of iterateRule(rule, parseLocalDT(e.start_local))) {
+        const iso = isoDate(day)
+        if (iso > today) break
+        if (exdates.has(iso)) continue
+        add(iso, ovMap.get(iso) ?? e.status)
+      }
+    } else {
+      const iso = e.start_local.slice(0, 10)
+      if (iso > today) continue
+      add(iso, ovMap.get(iso) ?? e.status)
+    }
+  }
   let streak = 0
-  for (let i = 0; i < 400; i++) {
+  for (let i = 0; i < 2000; i++) {
     const date = addDaysIso(today, -i)
-    const occs = occurrencesOn(db, date)
-    const hasEvents = occs.length > 0
-    const hasDone = occs.some((o) => o.status === 'done')
-    if (hasDone) {
+    if (earliest && date < earliest) break // nothing older exists
+    const g = gDay.get(date)
+    if (g && g.done > 0) {
       streak++
       continue
     }
     // TODAY is a grace day: pending plans (not yet done) must NOT break the
     // streak — the day isn't over. Only a PAST day with plans and nothing
     // done breaks it. Days with no events are rest days (streak continues).
-    if (hasEvents && i > 0) break
+    if (g && g.planned > 0 && i > 0) break
   }
   return streak
 }
@@ -307,18 +337,12 @@ export function registerGamifyHandlers(db: Db): void {
     return { award: awarded.length > 0, amount, weekKey: awarded[0] ?? null, streak: computeStreak(db) }
   })
 
-  /** PERFECT MONTH (new logic): every day of a completed month lies in a
-   *  perfect week (all overlapping Mon–Sun weeks perfect, boundary weeks as
-   *  whole weeks). Each such month pays +300 once (key = the 1st). */
+  /** PERFECT MONTH: every day of a completed month is a rest day or has at
+   *  least one done event, AND no block of 7+ consecutive no-event days exists
+   *  in the month. Pays +300 once (key = the 1st). */
   ipcMain.handle('coins:perfectMonth', () => {
     if (!coinsEnabled()) return { award: false, amount: 0, streak: computeStreak(db), level: null }
     const today = todayIso()
-    const weekDays = (mon: string) =>
-      [0, 1, 2, 3, 4, 5, 6].map((i) => {
-        const iso = addDaysIso(mon, i)
-        const occs = occurrencesOn(db, iso)
-        return { planned: occs.length, done: occs.filter((o) => o.status === 'done').length }
-      })
     const awarded: string[] = []
     let amount = 0
     for (let m = 0; m < 6; m++) {
@@ -329,10 +353,11 @@ export function registerGamifyHandlers(db: Db): void {
       const last = new Date(first.getFullYear(), first.getMonth() + 1, 0)
       const end = isoD(last)
       if (end >= today) continue // month not complete yet
-      // all overlapping weeks must be COMPLETE too (a boundary week extending
-      // into the next month isn't judged until it ends)
-      if (addDaysIso(weekKey(end), 6) > today) continue
-      if (!perfectMonthCheck(start, end, weekDays)) continue
+      const dayOf = (iso: string) => {
+        const occs = occurrencesOn(db, iso)
+        return { planned: occs.length, done: occs.filter((o) => o.status === 'done').length }
+      }
+      if (!perfectMonthCheck(start, end, dayOf)) continue
       const key = 'monthStreak.' + start
       if (db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key)) continue
       db.transaction(() => {
@@ -438,7 +463,14 @@ export function registerGamifyHandlers(db: Db): void {
    * user's real progress (achieved_at, notes) is preserved per level slot.
    */
   const normalizeMilestonePath = () => {
-    const costs = defaultMilestoneCosts(8)
+    // INFINITE PATH: always at least 30 levels; extend (+10) whenever the
+    // current net could reach the last level, so the +2000 ladder never ends
+    const balRow = db
+      .prepare("SELECT COALESCE(SUM(CASE WHEN type IN ('spend','refund') THEN -amount ELSE amount END), 0) AS b FROM coin_transactions")
+      .get() as { b: number }
+    let count = 30
+    while (defaultMilestoneCosts(count)[count - 1] <= balRow.b + 2000) count += 10
+    const costs = defaultMilestoneCosts(count)
     db.transaction(() => {
       // 1) drop rows that can't belong to the ladder (extras, free-form costs)
       const canonical = new Set(costs)
@@ -482,7 +514,7 @@ export function registerGamifyHandlers(db: Db): void {
         db.prepare('DELETE FROM reward_milestones').run()
         db.prepare("DELETE FROM settings WHERE key LIKE 'stoneReached.%' OR key LIKE 'stoneCrossed.%' OR key LIKE 'rewardAsked.%'").run()
         const now = new Date().toISOString()
-        defaultMilestoneCosts(8).forEach((cost, i) => {
+        defaultMilestoneCosts(30).forEach((cost, i) => {
           db.prepare(
             `INSERT INTO reward_milestones (id, name, icon, cost, notes, achieved_at, created_at)
              VALUES (?, ?, '🎯', ?, 'Set your reward', NULL, ?)`
@@ -573,6 +605,7 @@ export function registerGamifyHandlers(db: Db): void {
   })
 
   ipcMain.handle('coins:listTransactions', () => {
-    return db.prepare('SELECT * FROM coin_transactions ORDER BY ts DESC LIMIT 500').all().map(rowToTx)
+    // v1.10.6: NO cap — the ledger must show every entry (the UI scrolls).
+    return db.prepare('SELECT * FROM coin_transactions ORDER BY ts DESC').all().map(rowToTx)
   })
 }
