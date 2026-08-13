@@ -226,6 +226,12 @@
 /* selected = green tick; partial parent = blue plus (no red crosses) */
 .lb-check.tick { opacity: 1; background: var(--green); border-color: var(--green); color: #fff; }
 .lb-check.plus { opacity: 1; background: var(--accent); border-color: var(--accent); color: #fff; }
+/* cup 3 label selection colours — saffron (#FF9933) / green / blue */
+.label-row.sel-saffron .lb-check { opacity: 1; background: #ff9933; border-color: #ff9933; color: #fff; }
+.label-row.sel-saffron .label-name { color: #d97706; font-weight: 600; }
+.label-row.sel-green .lb-check { opacity: 1; background: var(--green); border-color: var(--green); color: #fff; }
+.label-row.sel-blue .lb-check { opacity: 1; background: var(--accent); border-color: var(--accent); color: #fff; }
+.label-row.sel-blue .label-name { color: var(--accent); font-weight: 600; }
 .lb-check.tick svg,
 .lb-check.plus svg { opacity: 1; }
 /* unselected labels keep the plain "not selected" look — just subtly dimmed */
@@ -348,6 +354,7 @@
 .today-count { font-weight: 700; font-size: 15px; color: var(--text); }
 .today-hours { font-weight: 600; color: var(--accent); }
 .today-done { font-weight: 600; color: var(--green); }
+.seg-coin { display: inline-flex; align-items: center; gap: 5px; }
 .coin-chip {
   display: flex;
   align-items: center;
@@ -461,7 +468,25 @@
   transition: max-height 0.3s cubic-bezier(0.2, 0.9, 0.3, 1), opacity 0.25s ease, margin 0.3s ease;
 }
 .status-wrap.gone { max-height: 0; opacity: 0; }
-.status-pills { display: flex; gap: 6px; padding-top: 10px; }
+.status-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 10px;
+  min-width: 0;
+}
+/* search as a long pill next to the status pills */
+.pill-search {
+  flex: 1;
+  max-width: 280px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  padding: 5px 14px;
+  margin-left: 4px;
+}
+.pill-search:focus-within { background: var(--surface); box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.18); }
+.pill-search input { border: none; outline: none; background: none; width: 100%; }
+.status-pills .new-btn { border-radius: 999px; margin-left: auto; flex: none; }
 .pill {
   padding: 4px 12px;
   border-radius: 999px;
@@ -807,6 +832,82 @@
   box-shadow: 0 0 14px rgba(10,132,255,0.35), inset 0 0 10px rgba(10,132,255,0.12);
 }
 .ph-icon { font-size: 13px; }
+.premium-heading.clickable { cursor: pointer; transition: transform 0.15s ease, filter 0.15s ease; }
+.premium-heading.clickable:hover { transform: scale(1.04); filter: brightness(1.08); }
+.premium-heading.clickable:active { transform: scale(0.97); }
+/* cup 3: coin-system disabled notice on the Coins page */
+.coins-off-banner {
+  flex: none;
+  margin: 0 0 10px;
+  padding: 9px 14px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 159, 10, 0.12);
+  border: 1px solid rgba(255, 159, 10, 0.45);
+  color: var(--text-2);
+  font-size: 12px;
+}
+/* cup 3: "How did it go?" answered → brief centered coin animation (toaster-like) */
+.coin-score-fx {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  pointer-events: none;
+  z-index: 90;
+  animation: fxFade 1.9s ease forwards;
+}
+.fx-coin {
+  position: relative;
+  animation: fxPop 0.5s cubic-bezier(0.2, 1.3, 0.4, 1) both;
+}
+/* the coin sits in the center with a slow, calm 3D flip (no flight, no count) */
+.fx-coin .c3-spin {
+  animation: gentleFlip 3.4s ease-in-out infinite;
+}
+/* gold dust + sparkles burst around the coin */
+.fx-dust {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+}
+.fx-dust span {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #ffe066, #ff9f0a);
+  box-shadow: 0 0 8px rgba(255, 190, 60, 0.95);
+  animation: fxDust 1.3s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+  opacity: 0;
+}
+.fx-dust .spark {
+  width: 5px;
+  height: 5px;
+  background: #fff7d6;
+  box-shadow: 0 0 10px rgba(255, 230, 150, 1);
+  animation: fxSpark 1.1s ease-out forwards;
+}
+@keyframes fxDust {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(0.2); opacity: 0; }
+}
+@keyframes fxSpark {
+  0% { transform: translate(0, 0) scale(0.4) rotate(0deg); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(1.4) rotate(120deg); opacity: 0; }
+}
+@keyframes fxPop {
+  0% { transform: scale(0.4) translateY(10px); opacity: 0; }
+  60% { transform: scale(1.1) translateY(-4px); opacity: 1; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+@keyframes fxFade {
+  0% { opacity: 0; }
+  10% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}
 /* coins variant: golden shine */
 .premium-heading.coins {
   border-color: var(--amber);
@@ -968,6 +1069,140 @@
 .ins-progress-done { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
 .ins-progress-val { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; width: 120px; text-align: right; flex: none; }
 
+/* ---------- rhythm coin — REAL 3D (thickness + milled edge band) ----------
+   .rhythm-coin (perspective) > .c3-spin (rotateY spin) > .c3-tilt (rotateX 90)
+   > .c3-face.front / .c3-face.back / .c3-seg × N (the cylindrical edge).      */
+.rhythm-coin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  flex: none;
+  position: relative;
+  perspective: calc(var(--size) * 16);
+}
+.c3-spin {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+}
+.c3-tilt {
+  position: absolute;
+  inset: 0;
+  transform: rotateX(90deg);
+  transform-style: preserve-3d;
+}
+.c3-face {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  backface-visibility: hidden;
+  overflow: hidden;
+}
+.c3-face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: block;
+  /* Gold fallback: even if the asset file ever fails to load, a coin is shown */
+  background: radial-gradient(circle at 34% 30%, #ffe9a8 0%, #d99b3c 52%, #8a4d1a 100%);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+  animation: rcShine 3s ease-in-out infinite;
+}
+.c3-seg {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  backface-visibility: hidden;
+}
+@keyframes rcShine {
+  0%, 100% { filter: brightness(1) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35)); }
+  50% { filter: brightness(1.14) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35)); }
+}
+/* gentle 3D rocking (chips, KPI cards, prompt) */
+.rhythm-coin.flip .c3-spin { animation: gentleFlip 3.4s ease-in-out infinite; }
+@keyframes gentleFlip {
+  0%, 100% { transform: rotateY(-16deg); }
+  50% { transform: rotateY(16deg); }
+}
+/* one-shot toss for the intro (drop handled by the intro wrapper; this spins) */
+.rhythm-coin.spin-in .c3-spin { animation: introCoinSpin 1.9s cubic-bezier(0.3, 0.65, 0.35, 1) both; }
+@keyframes introCoinSpin {
+  0% { transform: rotateY(0deg); }
+  100% { transform: rotateY(1260deg); }
+}
+/* ---------- header/tab coin: DROPS from above → BOUNCES → ROLLS right on
+   its edge like a wheel → disappears at the pill's edge. The face pattern
+   spins in its own plane during the roll (real wheel motion — no drunken
+   tumbling). Loop repeats. ---------- */
+.rhythm-coin.roll {
+  animation: coinDropRoll 4.2s infinite;
+  will-change: transform, opacity;
+  z-index: 1;
+  --ground: calc(var(--size) * 0.3);
+}
+.rhythm-coin.roll .c3-tilt {
+  animation: rollWheel 3.2s infinite;
+}
+/* the pill clips the coin so it drops in from the top and "disappears into
+   the pill's edge" on the right */
+.premium-heading, .seg-btn { position: relative; overflow: hidden; }
+.premium-heading.coins { --roll: 84px; }
+.seg-btn.active .seg-coin .rhythm-coin { --roll: 54px; }
+@keyframes coinDropRoll {
+  0% { transform: translateX(0) translateY(calc(var(--size) * -3.2)); opacity: 0; animation-timing-function: cubic-bezier(0.55, 0, 1, 0.45); }
+  6% { opacity: 1; animation-timing-function: cubic-bezier(0.55, 0, 1, 0.45); }
+  30% { transform: translateX(0) translateY(var(--ground, 6px)); opacity: 1; animation-timing-function: cubic-bezier(0.2, 0.6, 0.35, 1); }
+  37% { transform: translateX(5px) translateY(calc(var(--ground, 6px) * -1.9)); animation-timing-function: cubic-bezier(0.4, 0, 1, 0.55); }
+  44% { transform: translateX(10px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.25, 0.6, 0.35, 1); }
+  50% { transform: translateX(14px) translateY(calc(var(--ground, 6px) * -0.9)); animation-timing-function: cubic-bezier(0.45, 0, 1, 0.5); }
+  56% { transform: translateX(17px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.3, 0.65, 0.35, 1); }
+  /* roll starts with a gentle acceleration — smooth handoff from the last bounce */
+  64% { transform: translateX(22px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.25, 0.3, 0.3, 1); }
+  92% { transform: translateX(var(--roll, 60px)) translateY(var(--ground, 6px)); opacity: 1; animation-timing-function: linear; }
+  100% { transform: translateX(var(--roll, 60px)) translateY(var(--ground, 6px)); opacity: 0; }
+}
+/* the coin stands on its edge (face toward the viewer) and the FACE PATTERN
+   spins in its own plane only while it rolls (after the damped bounces) */
+@keyframes rollWheel {
+  0%, 64% { transform: rotateZ(0deg) rotateX(90deg); }
+  100% { transform: rotateZ(540deg) rotateX(90deg); }
+}
+/* ---------- twinkle ✦ (shines when its tab is selected, static otherwise) ---------- */
+.seg-ico {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.seg-coin {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  vertical-align: -2px;
+}
+.twinkle {
+  display: inline-block;
+  color: var(--amber);
+  font-size: 12px;
+  line-height: 1;
+  transform: scale(1);
+}
+.twinkle.shining {
+  animation: twinkleSpin 2.2s ease-in-out infinite;
+  filter: drop-shadow(0 0 5px rgba(255, 190, 60, 0.75));
+}
+@keyframes twinkleSpin {
+  0%, 100% { transform: rotate(0deg) scale(1); opacity: 1; }
+  25% { transform: rotate(18deg) scale(1.22); opacity: 0.85; }
+  50% { transform: rotate(-8deg) scale(1.1); opacity: 1; }
+  75% { transform: rotate(12deg) scale(1.26); opacity: 0.9; }
+}
+.seg-btn.active .twinkle { color: var(--amber); }
+
 /* ---------- milestones ---------- */
 .mile-widget {
   display: flex;
@@ -981,6 +1216,55 @@
   animation: fadeIn 0.25s ease;
 }
 .mile-widget.ready { background: linear-gradient(120deg, rgba(255, 214, 10, 0.14), rgba(255, 159, 10, 0.2)); }
+/* golden shining border while celebrating a milestone pass */
+.mile-widget.celebrating {
+  position: relative;
+  overflow: hidden;
+  border: 2px solid transparent;
+  background: linear-gradient(120deg, rgba(255, 214, 10, 0.18), rgba(255, 159, 10, 0.26));
+  animation: mileGoldBorder 1.2s ease-in-out infinite;
+}
+@keyframes mileGoldBorder {
+  0%, 100% { border-color: rgba(255, 200, 60, 0.55); box-shadow: 0 0 10px rgba(255, 190, 50, 0.35), inset 0 0 8px rgba(255, 190, 50, 0.2); }
+  50% { border-color: rgba(255, 220, 110, 0.95); box-shadow: 0 0 22px rgba(255, 190, 50, 0.7), inset 0 0 14px rgba(255, 190, 50, 0.4); }
+}
+.mile-celeb {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 10px 4px;
+}
+.mile-celeb-text {
+  position: relative;
+  z-index: 1;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #b45309;
+  text-align: center;
+  animation: celebTextPop 0.4s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+@keyframes celebTextPop {
+  0% { transform: scale(0.6); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.mile-celeb-dust {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #ffe066, #ff9f0a);
+  box-shadow: 0 0 6px rgba(255, 190, 60, 0.9);
+  animation: mileDust 1.2s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+  opacity: 0;
+}
+@keyframes mileDust {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(0.25); opacity: 0; }
+}
 .mile-ring { flex: none; }
 .mile-info { min-width: 0; }
 .mile-name { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1018,6 +1302,15 @@
 .mile-icon { width: 64px; }
 .mile-cost { width: 90px; }
 .mile-notes { flex: 3; min-width: 160px; }
+.rb-input {
+  padding: 6px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  outline: none;
+  font-size: 12.5px;
+}
+.rb-input:focus { border-color: var(--accent); }
 
 /* celebration */
 .overlay.celeb { z-index: 300; }
@@ -1057,17 +1350,431 @@
   100% { transform: translateY(105vh) rotate(720deg); opacity: 0.4; }
 }
 
-/* ---------- coins view ---------- */
+/* ---------- coins view (revamped) ---------- */
 .coins-view {
   height: 100%;
-  overflow-y: auto;
+  overflow: hidden; /* panels scroll individually */
   scrollbar-gutter: stable;
   background: var(--bg);
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 4px 2px 20px;
+  padding: 4px 2px 0;
+  position: relative;
 }
+/* ============ cinematic coin intro (dark-navy stage, coin + gold dust) ============ */
+.coin-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: radial-gradient(ellipse at 50% 42%, #17325c 0%, #0e2242 46%, #07152e 78%, #040b1c 100%);
+  /* fully opaque from the very first frame — the stage must never fade in,
+     otherwise the content behind it is visible for a moment (the "sneak
+     peek" / lag feeling when opening the Coins tab) */
+  opacity: 1;
+  animation: introStageOut 0.6s ease 4.5s forwards;
+}
+@keyframes introStageOut {
+  from { opacity: 1; }
+  to { opacity: 0; visibility: hidden; }
+}
+.intro-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 26px;
+  animation: introStageFloat 3s ease-in-out infinite;
+}
+@keyframes introStageFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+.intro-center {
+  position: relative;
+  width: 300px;
+  height: 300px;
+  display: grid;
+  place-items: center;
+}
+.intro-coin {
+  width: 150px;
+  height: 150px;
+  animation: introDropSpin 1.5s cubic-bezier(0.3, 0.8, 0.4, 1) both;
+}
+/* golden glow disc behind the coin (filter on the 3D coin would flatten it) */
+.intro-glow {
+  position: absolute;
+  width: 300px;
+  height: 300px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 196, 60, 0.42) 0%, rgba(255, 196, 60, 0.14) 42%, rgba(255, 196, 60, 0) 68%);
+  animation: glowPulse 2.2s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes glowPulse {
+  0%, 100% { opacity: 0.75; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+@keyframes introDropSpin {
+  0% { transform: translateY(-190px) scale(0.5); opacity: 0; }
+  40% { transform: translateY(0px) scale(1.02); opacity: 1; }
+  55% { transform: translateY(12px) scale(1.08); }
+  70% { transform: translateY(-10px) scale(0.97); }
+  84% { transform: translateY(5px) scale(1.01); }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+/* expanding gold ring shockwaves */
+.intro-ring {
+  position: absolute;
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 200, 60, 0.85);
+  box-shadow: 0 0 22px rgba(255, 190, 50, 0.55), inset 0 0 18px rgba(255, 190, 50, 0.35);
+  animation: introRing 1.15s cubic-bezier(0.18, 0.75, 0.35, 1) both;
+  pointer-events: none;
+  z-index: 0; /* rings expand FROM BEHIND the coin */
+}
+.intro-center .intro-glow { z-index: 0; }
+.intro-center .intro-coin { z-index: 2; }
+.intro-ring.r1 { animation-delay: 0.55s; }
+.intro-ring.r2 { animation-delay: 1.05s; }
+@keyframes introRing {
+  0% { transform: scale(0.55); opacity: 0.95; }
+  100% { transform: scale(2.9); opacity: 0; }
+}
+/* gold dust canvas (real particle physics) */
+.dust-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+/* wordmark */
+.intro-word {
+  text-align: center;
+  animation: wordIn 0.75s cubic-bezier(0.2, 0.9, 0.3, 1.05) 1.35s both;
+}
+.intro-word-main {
+  font-size: 42px;
+  font-weight: 800;
+  letter-spacing: 6px;
+  color: #ffd970;
+  text-shadow: 0 2px 0 rgba(90, 45, 5, 0.6), 0 0 26px rgba(255, 200, 80, 0.55);
+  animation: wordIn 0.75s cubic-bezier(0.2, 0.9, 0.3, 1.05) 1.35s both, wordPulse 2.6s ease-in-out 2s infinite;
+}
+.intro-word-main span {
+  font-weight: 300;
+  letter-spacing: 14px;
+  margin-left: 6px;
+}
+@keyframes wordIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.96); letter-spacing: 24px; }
+  to { opacity: 1; transform: none; }
+}
+@keyframes wordPulse {
+  0%, 100% { text-shadow: 0 2px 0 rgba(90, 45, 5, 0.6), 0 0 26px rgba(255, 200, 80, 0.55); }
+  50% { text-shadow: 0 2px 0 rgba(90, 45, 5, 0.6), 0 0 46px rgba(255, 220, 110, 0.85); }
+}
+.intro-word-sub {
+  margin-top: 8px;
+  font-size: 12.5px;
+  letter-spacing: 3.5px;
+  color: rgba(255, 226, 160, 0.85);
+  animation: wordIn 0.7s ease 1.6s both;
+}
+.intro-word-ver {
+  margin-top: 10px;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: rgba(160, 190, 235, 0.55);
+  animation: wordIn 0.6s ease 1.85s both;
+}
+/* KPI cards flip in as the intro fades (after the longer intro so content is readable) */
+.coins-kpis .coins-kpi { animation: kpiIn 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.1) both; }
+.coins-kpis .coins-kpi:nth-child(1) { animation-delay: 4.7s; }
+.coins-kpis .coins-kpi:nth-child(2) { animation-delay: 4.8s; }
+.coins-kpis .coins-kpi:nth-child(3) { animation-delay: 4.9s; }
+.coins-kpis .coins-kpi:nth-child(4) { animation-delay: 5.0s; }
+@keyframes kpiIn {
+  0% { opacity: 0; transform: translateY(16px) scale(0.94); }
+  100% { opacity: 1; transform: none; }
+}
+/* when the intro is SKIPPED, the KPI cards appear IMMEDIATELY — they never
+   wait for the intro's natural end timing */
+.coins-view.intro-skipped .coins-kpis .coins-kpi {
+  animation: none;
+  opacity: 1;
+  transform: none;
+}
+/* KPI emoji icons sized to match the coin icon (40px front / 26px today) */
+.kpi-emoji { font-size: 40px; line-height: 1; }
+.kpi-emoji.sm { font-size: 26px; }
+.coins-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 3fr 1fr; /* 3:1 horizontal cut */
+  gap: 12px;
+  overflow: hidden;
+  padding-bottom: 12px;
+}
+/* two columns; each has a PINNED KPI strip on top and an independent scroll below */
+.coins-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+/* KPI strips pinned to the top of their panel (3 in the left, 1 in the right) */
+.coins-kpis {
+  flex: none;
+  display: grid;
+  gap: 10px;
+}
+.coins-kpis.left { grid-template-columns: repeat(3, 1fr); }
+.coins-kpis.right { grid-template-columns: 1fr; }
+/* independent scrolls */
+.coins-left {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 0 6px 16px 0;
+}
+.coins-right {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 0 0 16px 6px;
+}
+.streak-kpi { min-height: 86px; }
+.coins-kpi {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  padding: 14px 16px;
+  min-height: 86px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  perspective: 500px;
+}
+.streak-kpi { min-height: 86px; }
+.coins-kpi.blue .coins-kpi-value { color: var(--accent); }
+.coins-kpi.green .coins-kpi-value { color: var(--green); }
+.coins-kpi.red .coins-kpi-value { color: var(--red); }
+.coins-kpi.gold .coins-kpi-value { color: var(--amber); }
+.kpi-coin { margin-right: 12px; display: inline-flex; }
+.coins-kpi-value { font-size: 21px; font-weight: 700; letter-spacing: -0.4px; font-variant-numeric: tabular-nums; }
+.coins-kpi-label { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+.coins-charts {
+  display: grid;
+  /* the 7-day panel equals a KPI card exactly: band = 4 cols of (W-3g)/4;
+     left panel = 3/4 of (W - 12); chart = 1 col of a 4-col split of the left,
+     with the same 10px gap math — tuned so widths match. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 10px;
+}
+
+/* streak calendar (Duolingo style) */
+.streak-month { display: flex; flex-direction: column; gap: 6px; }
+.streak-month-head { display: flex; align-items: center; justify-content: space-between; }
+.streak-month-title { font-size: 12.5px; font-weight: 600; }
+.streak-month-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.streak-month-week span { text-align: center; font-size: 9px; font-weight: 700; color: var(--text-3); }
+.streak-month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.streak-day {
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+.streak-day.done { background: var(--accent); color: #fff; box-shadow: 0 0 6px rgba(10, 132, 255, 0.45); }
+.streak-day.missed { background: var(--text-3); color: #fff; }
+.streak-day.none { background: var(--surface-3); color: var(--text-2); opacity: 0.75; }
+.streak-day.other { opacity: 0.35; }
+.streak-day.future { opacity: 0.15; }
+.streak-day.today { outline: 2px solid var(--accent); outline-offset: 1px; }
+.streak-goal { display: flex; flex-direction: column; gap: 8px; }
+.streak-goal-sub { font-size: 11.5px; color: var(--text-2); }
+.streak-goal-sub b { color: var(--text); }
+.streak-goal-stones { display: flex; align-items: flex-end; gap: 8px; }
+.streak-stone {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  opacity: 0.7;
+  position: relative;
+}
+.streak-stone.hit { background: var(--accent); color: #fff; opacity: 1; box-shadow: 0 2px 10px rgba(10, 132, 255, 0.4); }
+/* the second-last reached mile: a varied, lighter blue shade */
+.streak-stone.hit-prev { background: linear-gradient(180deg, #6db4ff, #3f9bff); color: #fff; opacity: 1; box-shadow: 0 2px 8px rgba(10, 132, 255, 0.25); }
+.streak-stone.next { background: rgba(255, 159, 10, 0.18); opacity: 1; }
+.streak-stone-num { font-size: 12px; font-weight: 700; }
+.streak-stone.hit .streak-stone-num { color: #fff; }
+.streak-stone-bar { width: 80%; height: 6px; border-radius: 999px; background: rgba(0, 0, 0, 0.15); overflow: hidden; }
+.streak-stone-fill { height: 100%; border-radius: 999px; background: var(--amber); transition: width 0.5s cubic-bezier(0.2, 0.9, 0.3, 1); }
+.streak-stone-tick { font-size: 11px; font-weight: 800; color: #fff; position: absolute; top: -6px; right: 2px; }
+.streak-legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 10.5px; color: var(--text-2); }
+.streak-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+.streak-legend .sl.done { background: var(--accent); }
+.streak-legend .sl.none { background: var(--surface-3); }
+.streak-legend .sl.missed { background: var(--text-3); }
+
+/* streak goal (Duolingo style) */
+.goal-bar-wrap { display: flex; align-items: center; gap: 10px; }
+.goal-flame { font-size: 20px; flex: none; animation: flame 1.2s ease-in-out infinite; }
+@keyframes flame {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+.goal-bar { flex: 1; height: 14px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+.goal-bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #ff9f0a, #ffd60a); transition: width 0.6s cubic-bezier(0.2, 0.9, 0.3, 1); }
+.goal-text { font-size: 12px; font-weight: 700; color: var(--amber); white-space: nowrap; }
+.goal-sub { font-size: 11px; color: var(--text-3); }
+
+/* milestone path — solid stones, stacked in order, linked without overlap */
+.mile-path { display: flex; flex-direction: column; gap: 10px; }
+.mile-stone {
+  position: relative;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  overflow: hidden; /* nothing can spill out of a stone — no text overlap */
+}
+.mile-stone.next { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.mile-stone.crossed { border-color: rgba(255, 159, 10, 0.55); background: linear-gradient(0deg, rgba(255, 214, 10, 0.10), rgba(255, 214, 10, 0.03)), var(--surface); }
+.mile-stone.first { border-color: rgba(255, 159, 10, 0.8); background: linear-gradient(0deg, rgba(255, 214, 10, 0.16), rgba(255, 214, 10, 0.05)), var(--surface); }
+.mile-stone-name { display: flex; align-items: center; gap: 8px; }
+.mile-level { font-size: 10.5px; font-weight: 700; color: var(--text-3); background: var(--surface-3); padding: 1px 8px; border-radius: 999px; }
+.mile-stone-notes {
+  font-size: 11px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  min-width: 0;
+}
+.redeem-gold { color: var(--amber); font-weight: 700; font-variant-numeric: tabular-nums; }
+.mile-edit { color: var(--amber); }
+/* connector between stacked stones — IN FLOW (a normal block at the top of
+   each stone) so stones can never overlap or collide, no matter the height */
+.mile-link {
+  width: 2px;
+  height: 12px;
+  margin: 0 auto 0 15px;
+  background: var(--border-strong);
+  border-radius: 1px;
+  flex: none;
+}
+.mile-stone-head { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; min-width: 0; }
+.mile-stone-actions { flex: none; flex-wrap: nowrap; white-space: nowrap; }
+.mile-stone-info { min-width: 0; overflow: hidden; }
+.mile-stone-icon { font-size: 20px; flex: none; }
+.mile-stone-info { flex: 1; min-width: 0; }
+.mile-stone-name { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mile-stone-cost { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.mile-stone-actions { display: flex; gap: 6px; flex: none; }
+.btn.sm { padding: 3px 10px; font-size: 11.5px; }
+.mile-sub { font-size: 10.5px; color: var(--text-3); margin-top: 4px; }
+/* ---------- reward-time batch popup (1+ reached milestones) ---------- */
+.reward-batch { width: 420px; max-width: 92vw; }
+.rb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+  max-height: 46vh;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.rb-item { display: flex; flex-direction: column; gap: 5px; }
+.rb-name { font-size: 12.5px; font-weight: 700; display: inline-flex; align-items: center; gap: 8px; }
+.rb-input { width: 100%; }
+
+/* ---------- settings dialog (M8) ---------- */
+.settings-dialog { width: 480px; max-width: 92vw; }
+.set-section {
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.set-section.about { border-bottom: none; }
+.set-title { font-size: 11px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-3); }
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.set-label { font-size: 13px; color: var(--text); display: inline-flex; align-items: center; gap: 6px; }
+.set-hint { font-size: 11px; color: var(--text-3); line-height: 1.45; }
+.set-actions { display: flex; gap: 8px; }
+.theme-seg .seg-btn { padding: 4px 14px; }
+/* iOS-style switch */
+.switch {
+  width: 42px;
+  height: 25px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  position: relative;
+  flex: none;
+  transition: background 0.2s ease;
+}
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 2.5px;
+  left: 2.5px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s cubic-bezier(0.3, 0.9, 0.4, 1.2);
+}
+.switch.on { background: var(--green); }
+.switch.on::after { transform: translateX(17px); }
+.settings-btn { opacity: 0.85; }
+.settings-btn:hover { opacity: 1; }
+
+/* narrow windows: keep Redeem / Claim / Edit in ONE row — never cascade */
+@media (max-width: 1240px) {
+  .mile-stone-head { gap: 6px; }
+  .mile-stone-icon { font-size: 16px; }
+  .btn.sm { padding: 3px 7px; font-size: 11px; }
+  .mile-stone-notes { font-size: 10.5px; }
+}
+@media (max-width: 980px) {
+  .mile-stone-icon { display: none; }
+  .mile-stone-name { font-size: 11.5px; }
+  .mile-level { display: none; }
+}
+
 .chart-stretch { display: block; margin: auto; } /* centered BOTH ways in the flex column */
 .coins-head {
   display: flex;
@@ -1093,7 +1800,7 @@
 .coins-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 .coins-grid .ins-panel { display: flex; flex-direction: column; }
 .coins-grid .ins-panel .chart-stretch { flex: 1; max-height: 150px; }
-.ledger { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+.ledger { display: flex; flex-direction: column; gap: 2px; max-height: 640px; overflow-y: auto; }
 .ledger-row {
   display: flex;
   align-items: center;
@@ -1275,6 +1982,63 @@
 .sp-event { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
 .sp-event .muted { font-size: 11.5px; }
 .sp-options { display: flex; flex-direction: column; gap: 8px; }
+.sp-opt { grid-template-columns: 1fr; }
+.sp-opt span, .sp-opt i { display: none; }
+.fx-layer {
+  position: fixed;
+  z-index: 500;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+.fx-layer .gold-dust {
+  position: absolute;
+  left: -60px;
+  top: -60px;
+  width: 120px;
+  height: 120px;
+}
+.fx-layer .fly-coin {
+  position: absolute;
+  left: -16px;
+  top: -16px;
+  opacity: 0;
+  filter: drop-shadow(0 0 10px rgba(255, 159, 10, 0.8));
+}
+.fx-layer.flying .fly-coin {
+  animation: flyToChip 0.8s cubic-bezier(0.3, 0.7, 0.4, 1) forwards;
+}
+@keyframes flyToChip {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--tx), var(--ty)) scale(0.45); opacity: 1; }
+}
+.fx-layer.flying .gold-dust-piece { animation-duration: 0.8s; }
+
+/* gold dust burst */
+.gold-dust {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 5;
+}
+.gold-dust-piece {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #ffe066, #ff9f0a);
+  animation: goldBurst 0.7s ease-out forwards;
+  opacity: 0;
+}
+@keyframes goldBurst {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--dx, 60px), var(--dy, -80px)) scale(0.4); opacity: 0; }
+}
+.gold-dust-piece:nth-child(3n) { --dx: -70px; --dy: -60px; }
+.gold-dust-piece:nth-child(3n+1) { --dx: 70px; --dy: -70px; }
+.gold-dust-piece:nth-child(3n+2) { --dx: 0px; --dy: -95px; }
 .sp-opt {
   display: grid;
   grid-template-columns: 1fr auto auto;

@@ -14,6 +14,7 @@ export const addDaysIso = (iso: string, n: number) => {
 export const CHECKIN_BASE = 10
 export const ALL_DONE_BONUS = 25
 export const PERFECT_WEEK_BONUS = 100
+export const PERFECT_MONTH_BONUS = 300
 export const CHECKIN_STREAK_MULTIPLIER_DAY = 7 // every 7-day streak → ×2
 
 export interface CheckInResult {
@@ -70,4 +71,82 @@ export function weekKey(anyDayInWeek: string): string {
   const mon = new Date(d)
   mon.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
   return isoD(mon)
+}
+
+/** The growing milestone path: 100, 250, 500, 1000, 1500, 2500, 4000, then +2000 forever. */
+export function defaultMilestoneCosts(count: number): number[] {
+  const base = [100, 250, 500, 1000, 1500, 2500, 4000]
+  const out: number[] = []
+  let prev = 4000
+  for (let i = 0; i < count; i++) {
+    if (i < base.length) out.push(base[i])
+    else {
+      prev += 2000
+      out.push(prev)
+    }
+  }
+  return out
+}
+
+/**
+ * Perfect-week reward fires when the current streak hits a multiple of 7
+ * (7, 14, 21, …). Returns the streak level to award (or null).
+ */
+export function streakAwardLevel(streak: number): number | null {
+  return streak > 0 && streak % 7 === 0 ? streak : null
+}
+
+/** Perfect month: a 30-day streak (30, 60, 90, …). Returns the level to award. */
+export function monthAwardLevel(streak: number): number | null {
+  return streak > 0 && streak % 30 === 0 ? streak : null
+}
+
+/** Streak-milestone path: 5, 10, 20, 30, 50, 75, then +25 forever. */
+export function defaultStreakCosts(count: number): number[] {
+  const base = [5, 10, 20, 30, 50, 75]
+  const out: number[] = []
+  let prev = 75
+  for (let i = 0; i < count; i++) {
+    if (i < base.length) out.push(base[i])
+    else {
+      prev += 25
+      out.push(prev)
+    }
+  }
+  return out
+}
+
+/** Highest streak milestone reached by `streak` (or null below the first, 5). */
+export function streakMilestoneLevel(streak: number): number | null {
+  if (streak < 5) return null
+  const costs = defaultStreakCosts(80)
+  let hit: number | null = null
+  for (const c of costs) {
+    if (c <= streak) hit = c
+    else break
+  }
+  return hit
+}
+
+/**
+ * The 4-stone window for the streak goal box: the recently-hit stone is the
+ * SECOND stone (the FIRST stone for the very first milestone); for a streak
+ * below the first milestone the window starts at the first stone.
+ * Returns { stones, hitIndex, nextIndex }.
+ */
+export function streakWindow(streak: number): { stones: number[]; hitIndex: number; nextIndex: number } {
+  const costs = defaultStreakCosts(80)
+  let idx = -1
+  for (let i = 0; i < costs.length; i++) {
+    if (costs[i] <= streak) idx = i
+    else break
+  }
+  if (idx < 0) return { stones: costs.slice(0, 4), hitIndex: -1, nextIndex: 0 }
+  const start = idx === 0 ? 0 : idx - 1
+  return { stones: costs.slice(start, start + 4), hitIndex: idx - start, nextIndex: idx - start + 1 }
+}
+
+/** Streak-milestone reward: milestone value × 2. */
+export function streakMilestoneReward(level: number): number {
+  return level * 2
 }

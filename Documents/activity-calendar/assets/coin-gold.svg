@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 640" width="640" height="640">
+  <defs>
+    <radialGradient id="g" cx="52%" cy="40%" r="66%">
+      <stop offset="0%" stop-color="#fff4d8"/><stop offset="20%" stop-color="#fce28a"/>
+      <stop offset="42%" stop-color="#ebb85c"/><stop offset="62%" stop-color="#c68634"/>
+      <stop offset="80%" stop-color="#98561a"/><stop offset="100%" stop-color="#6e3a0e"/>
+    </radialGradient>
+  </defs>
+  <circle cx="320" cy="320" r="300" fill="url(#g)"/>
+  <!-- reeded edge -->
+  <g stroke="#8a4a14" stroke-width="2" opacity="0.55">
+    <path d="M320 20 a300 300 0 0 1 280 70"/>
+    <path d="M600 90 a300 300 0 0 1 0 460"/>
+    <path d="M600 550 a300 300 0 0 1 -280 70"/>
+    <path d="M320 620 a300 300 0 0 1 -280 -70"/>
+    <path d="M40 550 a300 300 0 0 1 0 -460"/>
+    <path d="M40 90 a300 300 0 0 1 280 -70"/>
+  </g>
+  <circle cx="320" cy="320" r="300" fill="none" stroke="#f8e0a8" stroke-width="3" opacity="0.7"/>
+  <circle cx="320" cy="320" r="288" fill="none" stroke="#5a2c0a" stroke-width="5" opacity="0.5"/>
+  <circle cx="320" cy="320" r="252" fill="none" stroke="#7a3c0e" stroke-width="2.5" opacity="0.55"/>
+  <!-- tsk script mark (Pacifico-style) -->
+  <text x="320" y="352" text-anchor="middle" font-family="Segoe Script, Brush Script MT, cursive" font-size="190" font-style="italic" fill="#e8b25c" stroke="#4a2004" stroke-width="3" paint-order="stroke">tsk</text>
+  <circle cx="448" cy="224" r="30" fill="#fffdf2" opacity="0.3"/>
+</svg>

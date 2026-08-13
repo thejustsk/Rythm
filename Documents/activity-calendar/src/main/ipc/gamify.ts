@@ -2,8 +2,10 @@ import { ipcMain } from 'electron'
 import type { Db } from '../db/connection'
 import type { CoinTransaction, ScoreRow, ScoreType } from '@shared/types'
 import {
-  checkInState, allDoneCheck, perfectWeekCheck, weekKey,
-  addDaysIso, ALL_DONE_BONUS, PERFECT_WEEK_BONUS
+  checkInState, allDoneCheck, weekKey,
+  addDaysIso, ALL_DONE_BONUS, PERFECT_WEEK_BONUS, PERFECT_MONTH_BONUS,
+  streakAwardLevel, monthAwardLevel, defaultMilestoneCosts,
+  streakMilestoneLevel, streakMilestoneReward
 } from '../gamifyCore'
 import { parseRRule, iterateRule, isoDate } from '../../renderer/src/engine/recurrence'
 
@@ -43,6 +45,25 @@ function occurrencesOn(db: Db, dateIso: string): Array<{ eventId: string; status
     }
   }
   return out
+}
+
+/** Current streak: walk back from today; done days count, no-event days skip,
+ *  event-without-done breaks. */
+function computeStreak(db: Db): number {
+  const today = todayIso()
+  let streak = 0
+  for (let i = 0; i < 400; i++) {
+    const date = addDaysIso(today, -i)
+    const occs = occurrencesOn(db, date)
+    const hasEvents = occs.length > 0
+    const hasDone = occs.some((o) => o.status === 'done')
+    if (hasDone) {
+      streak++
+      continue
+    }
+    if (hasEvents) break
+  }
+  return streak
 }
 
 export function rowToScore(r: any): ScoreRow {
@@ -86,6 +107,7 @@ export function registerGamifyHandlers(db: Db): void {
    *  an earn is only written when the score row is NEW (re-scoring the same
    *  key updates the score but never earns twice). */
   ipcMain.handle('coins:scoreEvent', (_e, eventId: string, originDate: string, scoreType: ScoreType, amount: number, labelId: string | null) => {
+    if (!coinsEnabled()) return { earned: false, amount: 0 }
     const now = new Date().toISOString()
     return db.transaction(() => {
       const exists = db
@@ -202,6 +224,7 @@ export function registerGamifyHandlers(db: Db): void {
   /** Balance = sum(earn + bonus + refund) − sum(spend), derived from the ledger. */
   /** Daily check-in: +10 once per day; streak continues from yesterday; ×2 every 7th day. */
   ipcMain.handle('coins:checkIn', () => {
+    if (!coinsEnabled()) return { award: false, streak: 0, amount: 0, multiplier: 1 }
     const today = todayIso()
     const last = db.prepare("SELECT value FROM settings WHERE key = 'lastCheckIn'").get() as { value: string } | undefined
     const streakRow = db.prepare("SELECT value FROM settings WHERE key = 'checkInStreak'").get() as { value: string } | undefined
@@ -223,6 +246,7 @@ export function registerGamifyHandlers(db: Db): void {
 
   /** "All planned done" bonus for a day (+25), awarded once per day. */
   ipcMain.handle('coins:allDoneCheck', (_e, originDate: string) => {
+    if (!coinsEnabled()) return { award: false, amount: 0 }
     const occs = occurrencesOn(db, originDate)
     const planned = occs.length
     const resolved = occs.filter((o) => o.status === 'done' || o.status === 'cancelled').length
@@ -239,39 +263,68 @@ export function registerGamifyHandlers(db: Db): void {
   })
 
   /**
-   * Perfect week (+100, once per week): every day of the last 7 COMPLETED days
-   * (yesterday back 7 — today's still-pending items NEVER block it) must be
-   * active (≥1 done) or a rest day (no plans). A day only counts as missed if
-   * it had plans and NOTHING was done.
+   * Perfect week (+100) now fires when the current streak hits a multiple of 7
+   * (7, 14, 21, …) — once per level. Streak rules: a done day counts; a day
+   * with no events is skipped (streak continues, not counted); a day WITH
+   * events but none done breaks the streak.
    */
   ipcMain.handle('coins:perfectWeek', () => {
+    if (!coinsEnabled()) return { award: false, amount: 0, weekKey: null, blockingDay: null, streak: 0 }
     const today = todayIso()
-    const days: Array<{ date: string; hasDone: boolean; hasMissed: boolean; planned: number }> = []
-    for (let i = 1; i <= 7; i++) {
-      const date = addDaysIso(today, -i)
-      const occs = occurrencesOn(db, date)
-      days.push({
-        date,
-        planned: occs.length,
-        hasDone: occs.some((o) => o.status === 'done'),
-        hasMissed: occs.some((o) => o.status === 'todo' || o.status === 'doing')
-      })
-    }
-    if (!perfectWeekCheck(days)) {
-      const blocking = days.find((d) => d.planned > 0 && !d.hasDone)
-      return { award: false, amount: 0, weekKey: null, blockingDay: blocking?.date ?? null }
-    }
-    const key = 'perfectWeek.' + weekKey(days[0].date)
+    const streak = computeStreak(db)
+const level = streakAwardLevel(streak)
+    if (level === null) return { award: false, amount: 0, weekKey: null, streak }
+    const key = 'streakAward.' + level
     const done = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key)
-    if (done) return { award: false, amount: 0, weekKey: key }
+    if (done) return { award: false, amount: 0, weekKey: key, streak }
     db.transaction(() => {
       db.prepare("INSERT INTO settings (key, value) VALUES (?, '1')").run(key)
       db.prepare(
         `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
          VALUES (?, ?, NULL, ?, NULL, 'bonus', ?, 'Perfect week', NULL)`
-      ).run(crypto.randomUUID(), new Date().toISOString(), days[0].date, PERFECT_WEEK_BONUS)
+      ).run(crypto.randomUUID(), new Date().toISOString(), today, PERFECT_WEEK_BONUS)
     })()
-    return { award: true, amount: PERFECT_WEEK_BONUS, weekKey: key }
+    return { award: true, amount: PERFECT_WEEK_BONUS, weekKey: key, streak }
+  })
+
+  /** Perfect month: 30-day streak (30, 60, …) → +300 once per level. */
+  ipcMain.handle('coins:perfectMonth', () => {
+    if (!coinsEnabled()) return { award: false, amount: 0, streak: 0, level: null }
+    const today = todayIso()
+    const streak = computeStreak(db)
+    const level = monthAwardLevel(streak)
+    if (level === null) return { award: false, amount: 0, streak, level: null }
+    const key = 'monthStreak.' + level
+    const done = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key)
+    if (done) return { award: false, amount: 0, streak, level }
+    db.transaction(() => {
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, '1')").run(key)
+      db.prepare(
+        `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
+         VALUES (?, ?, NULL, ?, NULL, 'bonus', ?, 'Perfect month', NULL)`
+      ).run(crypto.randomUUID(), new Date().toISOString(), today, PERFECT_MONTH_BONUS)
+    })()
+    return { award: true, amount: PERFECT_MONTH_BONUS, streak, level }
+  })
+
+  /** Streak milestone: when the streak reaches 5/10/20/… award value × 2 coins (once per level). */
+  ipcMain.handle('coins:streakMilestone', () => {
+    if (!coinsEnabled()) return { award: false, amount: 0, streak: 0, level: null }
+    const streak = computeStreak(db)
+    const level = streakMilestoneLevel(streak)
+    if (level === null) return { award: false, amount: 0, streak, level: null }
+    const key = 'streakMs.' + level
+    const done = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key)
+    if (done) return { award: false, amount: 0, streak, level }
+    const amount = streakMilestoneReward(level)
+    db.transaction(() => {
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, '1')").run(key)
+      db.prepare(
+        `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
+         VALUES (?, ?, NULL, ?, NULL, 'bonus', ?, 'Streak milestone', NULL)`
+      ).run(crypto.randomUUID(), new Date().toISOString(), todayIso(), amount)
+    })()
+    return { award: true, amount, streak, level }
   })
 
   /** Stats for the Coins view: today net, 7-day series, per-label earnings.
@@ -308,6 +361,16 @@ export function registerGamifyHandlers(db: Db): void {
     return { today: net(today), series, perLabel }
   })
 
+  // ---- cup 3: coin-system master switch ----
+  const coinsEnabled = () => {
+    const v = db.prepare("SELECT value FROM settings WHERE key = 'coinSystem'").get() as { value: string } | undefined
+    return v ? v.value !== '0' : true
+  }
+  ipcMain.handle('coins:system', () => coinsEnabled())
+  ipcMain.handle('coins:setSystem', (_e, on: boolean) => {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('coinSystem', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(on ? '1' : '0')
+  })
+
   // ---- milestones ----
   const rowToMilestone = (r: any) => ({
     id: r.id,
@@ -318,9 +381,97 @@ export function registerGamifyHandlers(db: Db): void {
     achievedAt: r.achieved_at,
     createdAt: r.created_at
   })
+  /** A milestone is "reached" once its cost was ever met (sticky setting) or it
+   *  was first-claimed. EVERY path that returns a milestone (list/create/update)
+   *  must include this flag — otherwise the renderer loses it on edit and the
+   *  path wrongly collapses (the "first time after editing" bug). */
+  const withReached = (r: any) => ({
+    ...rowToMilestone(r),
+    reached: !!r.achieved_at || !!db.prepare('SELECT 1 FROM settings WHERE key = ?').get('stoneReached.' + r.cost)
+  })
+
+  /**
+   * Canonicalize the milestone path — runs on EVERY list so no DB state can
+   * break the design: the path is ALWAYS exactly "Level 1..8" with fixed costs
+   * (100, 250, 500, …), Level 1 first. Legacy rows (old 'Level 100' names,
+   * renamed levels, extra rows, missing rows) are repaired in place, and the
+   * user's real progress (achieved_at, notes) is preserved per level slot.
+   */
+  const normalizeMilestonePath = () => {
+    const costs = defaultMilestoneCosts(8)
+    db.transaction(() => {
+      // 1) drop rows that can't belong to the ladder (extras, free-form costs)
+      const canonical = new Set(costs)
+      const all = db.prepare('SELECT id, cost FROM reward_milestones').all() as any[]
+      const stmt = db.prepare('DELETE FROM reward_milestones WHERE id = ?')
+      for (const r of all) if (!canonical.has(r.cost)) stmt.run(r.id)
+      // 2) fill / repair the 8 slots in cost order (progress preserved per slot)
+      const rows = db.prepare('SELECT * FROM reward_milestones ORDER BY cost').all() as any[]
+      const now = new Date().toISOString()
+      for (let i = 0; i < costs.length; i++) {
+        const expectCost = costs[i]
+        const expectName = 'Level ' + (i + 1)
+        const row = rows[i]
+        if (row) {
+          if (row.cost !== expectCost || row.name !== expectName) {
+            db.prepare('UPDATE reward_milestones SET cost = ?, name = ? WHERE id = ?').run(expectCost, expectName, row.id)
+          }
+        } else {
+          db.prepare(
+            `INSERT INTO reward_milestones (id, name, icon, cost, notes, achieved_at, created_at)
+             VALUES (?, ?, '🎯', ?, 'Set your reward', NULL, ?)`
+          ).run(crypto.randomUUID(), expectName, expectCost, now)
+        }
+      }
+      // 3) drop any extras beyond the 8 slots
+      const after = db.prepare('SELECT id FROM reward_milestones ORDER BY cost').all() as any[]
+      for (let i = costs.length; i < after.length; i++) stmt.run(after[i].id)
+      // mark migration done so future list calls skip the historical rebuild path
+      db.prepare("INSERT INTO settings (key, value) VALUES ('milestonePathV2', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run()
+    })()
+  }
 
   ipcMain.handle('milestones:list', () => {
-    return db.prepare('SELECT * FROM reward_milestones ORDER BY cost').all().map(rowToMilestone)
+    const rows = db.prepare('SELECT * FROM reward_milestones ORDER BY cost').all() as any[]
+    const v2 = db.prepare("SELECT 1 FROM settings WHERE key = 'milestonePathV2'").get()
+    if (rows.length === 0 || !v2) {
+      // ONE-TIME fresh start: canonical Level 1..8, nothing achieved yet —
+      // guarantees "start from ONLY Level 1" regardless of any legacy data.
+      // Also clears any sticky-reach keys left by an earlier path version.
+      db.transaction(() => {
+        db.prepare('DELETE FROM reward_milestones').run()
+        db.prepare("DELETE FROM settings WHERE key LIKE 'stoneReached.%' OR key LIKE 'stoneCrossed.%' OR key LIKE 'rewardAsked.%'").run()
+        const now = new Date().toISOString()
+        defaultMilestoneCosts(8).forEach((cost, i) => {
+          db.prepare(
+            `INSERT INTO reward_milestones (id, name, icon, cost, notes, achieved_at, created_at)
+             VALUES (?, ?, '🎯', ?, 'Set your reward', NULL, ?)`
+          ).run(crypto.randomUUID(), 'Level ' + (i + 1), cost, now)
+        })
+        db.prepare("INSERT INTO settings (key, value) VALUES ('milestonePathV2', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run()
+      })()
+    } else {
+      // Flag already set: repair names/costs/extras WITHOUT touching real
+      // progress (achieved_at and notes are preserved per level slot).
+      normalizeMilestonePath()
+    }
+    // STICKY REACH: any stone whose cost is currently met (or already claimed)
+    // is remembered forever via `stoneReached.<cost>`. The renderer then never
+    // removes a level box even after the net drops below the cost.
+    const bal = db
+      .prepare("SELECT COALESCE(SUM(CASE WHEN type IN ('spend','refund') THEN -amount ELSE amount END), 0) AS b FROM coin_transactions")
+      .get() as { b: number }
+    const list = db.prepare('SELECT * FROM reward_milestones ORDER BY cost').all() as any[]
+    const reachKey = (cost: number) => 'stoneReached.' + cost
+    db.transaction(() => {
+      const ins = db.prepare(
+        "INSERT INTO settings (key, value) VALUES (?, '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+      )
+      for (const m of list) {
+        if (m.achieved_at || bal.b >= m.cost) ins.run(reachKey(m.cost))
+      }
+    })()
+    return list.map((r) => withReached(r))
   })
 
   ipcMain.handle('milestones:create', (_e, name: string, icon: string, cost: number, notes: string) => {
@@ -329,7 +480,7 @@ export function registerGamifyHandlers(db: Db): void {
       `INSERT INTO reward_milestones (id, name, icon, cost, notes, achieved_at, created_at)
        VALUES (?, ?, ?, ?, ?, NULL, ?)`
     ).run(id, name, icon || '🎯', cost, notes, new Date().toISOString())
-    return rowToMilestone(db.prepare('SELECT * FROM reward_milestones WHERE id = ?').get(id))
+    return withReached(db.prepare('SELECT * FROM reward_milestones WHERE id = ?').get(id))
   })
 
   ipcMain.handle('milestones:update', (_e, id: string, patch: { name?: string; icon?: string; cost?: number; notes?: string }) => {
@@ -342,15 +493,17 @@ export function registerGamifyHandlers(db: Db): void {
       patch.notes ?? existing.notes,
       id
     )
-    return rowToMilestone(db.prepare('SELECT * FROM reward_milestones WHERE id = ?').get(id))
+    return withReached(db.prepare('SELECT * FROM reward_milestones WHERE id = ?').get(id))
   })
 
   ipcMain.handle('milestones:remove', (_e, id: string) => {
     db.prepare('DELETE FROM reward_milestones WHERE id = ?').run(id)
   })
 
-  /** Claim a milestone: spend the cost (derived from the ledger), mark achieved. */
+  /** Claim a milestone (redeemable MULTIPLE times): spends the cost; achieved_at
+   *  only records the FIRST claim. */
   ipcMain.handle('milestones:claim', (_e, id: string) => {
+    if (!coinsEnabled()) return { ok: false, balance: 0 }
     const m = db.prepare('SELECT * FROM reward_milestones WHERE id = ?').get(id) as any
     if (!m) return { ok: false, balance: 0 }
     const bal = db
@@ -362,7 +515,9 @@ export function registerGamifyHandlers(db: Db): void {
         `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
          VALUES (?, ?, NULL, NULL, NULL, 'spend', ?, 'Milestone: ' || ?, NULL)`
       ).run(crypto.randomUUID(), new Date().toISOString(), m.cost, m.name)
-      db.prepare('UPDATE reward_milestones SET achieved_at = ? WHERE id = ?').run(new Date().toISOString(), id)
+      if (!m.achieved_at) {
+        db.prepare('UPDATE reward_milestones SET achieved_at = ? WHERE id = ?').run(new Date().toISOString(), id)
+      }
     })()
     const nb = db
       .prepare("SELECT COALESCE(SUM(CASE WHEN type IN ('spend','refund') THEN -amount ELSE amount END), 0) AS b FROM coin_transactions")

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, nativeTheme } from 'electron'
 import path from 'node:path'
 import { openDatabase, getDataDir } from './db/connection'
 import { migrate } from './db/schema'
@@ -11,7 +11,20 @@ import { registerWindowHandlers } from './ipc/window'
 
 const isDev = !app.isPackaged
 
-function createWindow(): BrowserWindow {
+/** Resolve the stored theme (light/dark/system) to a concrete window
+ *  background so the window never flashes white in dark mode. */
+function windowBackgroundColor(db: ReturnType<typeof openDatabase>): string {
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'theme'").get() as { value: string } | undefined
+    const pref = row?.value ?? 'system'
+    const dark = pref === 'dark' || (pref === 'system' && nativeTheme.shouldUseDarkColors)
+    return dark ? '#1C1C1E' : '#F5F5F7'
+  } catch {
+    return '#F5F5F7'
+  }
+}
+
+function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
   const win = new BrowserWindow({
     width: 1380,
     height: 880,
@@ -19,7 +32,7 @@ function createWindow(): BrowserWindow {
     minHeight: 640,
     frame: false,
     show: false,
-    backgroundColor: '#F5F5F7',
+    backgroundColor: db ? windowBackgroundColor(db) : '#F5F5F7',
     title: 'Rhythm',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -73,7 +86,39 @@ function createWindow(): BrowserWindow {
                 agendaTitles: Array.from(document.querySelectorAll('.agenda-title')).map((e) => e.textContent.trim()),
                 firstBlockTexts: text('.eb-title'),
                 nowLine: q('.now-line'),
-                errors: window.__errors || []
+                errors: window.__errors || [],
+                intro: (() => {
+                  const w = document.querySelector('.intro-word')
+                  const m = document.querySelector('.intro-word-main')
+                  if (!w) return null
+                  const wr = w.getBoundingClientRect()
+                  return {
+                    rect: { x: Math.round(wr.x), y: Math.round(wr.y), w: Math.round(wr.width), h: Math.round(wr.height) },
+                    opacity: getComputedStyle(w).opacity,
+                    visibility: getComputedStyle(w).visibility,
+                    color: m ? getComputedStyle(m).color : null,
+                    clip: m ? getComputedStyle(m).webkitBackgroundClip || getComputedStyle(m).backgroundClip : null,
+                    anim: m ? getComputedStyle(m).animationName : null,
+                    text: m ? m.textContent : null
+                  }
+                })(),
+                coin3d: (() => {
+                  const coin = document.querySelector('.premium-heading .ph-icon .rhythm-coin')
+                  if (!coin) return null
+                  const r = coin.getBoundingClientRect()
+                  const spin = coin.querySelector('.c3-spin')
+                  const face = coin.querySelector('.c3-face.front')
+                  const fr = face ? face.getBoundingClientRect() : null
+                  return {
+                    wrap: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
+                    spinAnim: spin ? getComputedStyle(spin).animationName : '',
+                    spinTs: spin ? getComputedStyle(spin).transformStyle : '',
+                    spinTransform: spin ? getComputedStyle(spin).transform : '',
+                    face: fr ? { w: Math.round(fr.width), h: Math.round(fr.height) } : null,
+                    segs: coin.querySelectorAll('.c3-seg').length,
+                    wrapPerspective: getComputedStyle(coin).perspective
+                  }
+                })()
               }
             })()`)
             fs.writeFileSync(process.env.AC_DOM_DUMP!, JSON.stringify(info, null, 2))
@@ -88,14 +133,14 @@ function createWindow(): BrowserWindow {
           console.error('[screenshot] failed', e)
         }
         app.quit()
-      }, 2600)
+      }, parseInt(process.env.AC_SHOT_DELAY || '2600', 10))
     })
   }
 
   return win
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   console.log('[main] data dir:', getDataDir())
   const db = openDatabase()
   migrate(db)
@@ -107,10 +152,14 @@ app.whenReady().then(() => {
   registerGamifyHandlers(db)
   registerWindowHandlers()
 
-  createWindow()
+  createWindow(db)
+
+  // M8: automatic daily backup (once per 24h, when enabled)
+  const { runAutoBackup } = await import('./backup')
+  void runAutoBackup(db)
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(db)
   })
 })
 

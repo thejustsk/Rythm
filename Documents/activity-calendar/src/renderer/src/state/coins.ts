@@ -20,9 +20,18 @@ interface CoinsState {
   scores: Map<string, ScoreRow>
   pending: PendingScore | null
   stats: CoinStats | null
+  bestStreak: number
   loaded: boolean
+  /** cup 3: coin-system master switch (persisted in settings 'coinSystem'). */
+  systemOn: boolean
+  /** cup 3: "How did it go?" answered → brief non-blocking coin animation. */
+  scoreFx: boolean
   load: () => Promise<void>
   refreshStats: () => Promise<void>
+  setSystem: (on: boolean) => Promise<void>
+  fireScoreFx: () => void
+  /** Persist the all-time best streak whenever the current one exceeds it. */
+  updateBestStreak: (streak: number) => Promise<void>
   setPending: (p: PendingScore | null) => void
   scoreEvent: (p: PendingScore, scoreType: ScoreType) => Promise<number>
   clearScores: (eventId: string, originDate?: string) => Promise<{ scores: ScoreRow[]; earns: Array<{ eventId: string; originDate: string; amount: number; labelId: string | null }> }>
@@ -40,20 +49,43 @@ export const useCoins = create<CoinsState>((set, get) => ({
   scores: new Map(),
   pending: null,
   stats: null,
+  bestStreak: 0,
   loaded: false,
+  systemOn: true,
+  scoreFx: false,
 
   load: async () => {
-    const [balance, txs, stats] = await Promise.all([
+    const [balance, txs, stats, best, systemOn] = await Promise.all([
       window.api.coins.balance(),
       window.api.coins.listTransactions(),
-      window.api.coins.stats()
+      window.api.coins.stats(),
+      window.api.settings.get('bestStreak'),
+      window.api.coins.system()
     ])
-    set({ balance, txs, stats, loaded: true })
+    set({ balance, txs, stats, bestStreak: parseInt(best ?? '0', 10) || 0, systemOn, loaded: true })
+  },
+
+  setSystem: async (on) => {
+    await window.api.coins.setSystem(on)
+    set({ systemOn: on })
+  },
+
+  fireScoreFx: () => {
+    set({ scoreFx: true })
+    window.setTimeout(() => set({ scoreFx: false }), 1900)
   },
 
   refreshStats: async () => {
     const stats = await window.api.coins.stats()
     set({ stats })
+  },
+
+  updateBestStreak: async (streak) => {
+    const cur = get().bestStreak
+    if (streak > cur) {
+      set({ bestStreak: streak })
+      await window.api.settings.set('bestStreak', String(streak))
+    }
   },
 
   setPending: (p) => set({ pending: p }),
@@ -108,3 +140,8 @@ export const useCoins = create<CoinsState>((set, get) => ({
     set({ balance, txs, stats })
   }
 }))
+
+// Test hook for the automated smoke suite — harmless in production.
+;(window as unknown as { __rhythmCoins: { refresh: () => Promise<void> } }).__rhythmCoins = {
+  refresh: () => useCoins.getState().refresh()
+}

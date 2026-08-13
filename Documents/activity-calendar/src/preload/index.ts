@@ -21,6 +21,15 @@ const api: Api = {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),
     set: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value)
   },
+  backups: {
+    list: () => ipcRenderer.invoke('backups:list'),
+    now: () => ipcRenderer.invoke('backups:now')
+  },
+  app: {
+    info: () => ipcRenderer.invoke('app:info'),
+    openDataFolder: () => ipcRenderer.invoke('app:openDataFolder'),
+    openBackupsFolder: () => ipcRenderer.invoke('app:openBackupsFolder')
+  },
   coins: {
     scoreEvent: (eventId: string, originDate: string, scoreType: ScoreType, amount: number, labelId: string | null): Promise<{ earned: boolean; amount: number }> =>
       ipcRenderer.invoke('coins:scoreEvent', eventId, originDate, scoreType, amount, labelId),
@@ -37,6 +46,10 @@ const api: Api = {
     checkIn: () => ipcRenderer.invoke('coins:checkIn'),
     allDoneCheck: (originDate: string) => ipcRenderer.invoke('coins:allDoneCheck', originDate),
     perfectWeek: () => ipcRenderer.invoke('coins:perfectWeek'),
+    perfectMonth: () => ipcRenderer.invoke('coins:perfectMonth'),
+    streakMilestone: () => ipcRenderer.invoke('coins:streakMilestone'),
+    system: () => ipcRenderer.invoke('coins:system'),
+    setSystem: (on: boolean) => ipcRenderer.invoke('coins:setSystem', on),
     stats: () => ipcRenderer.invoke('coins:stats'),
     balance: (): Promise<number> => ipcRenderer.invoke('coins:balance'),
     listTransactions: (): Promise<CoinTransaction[]> => ipcRenderer.invoke('coins:listTransactions')

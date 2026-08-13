@@ -1,4 +1,5 @@
 import { useUi } from '@/state/store'
+import Coin from './Coin'
 
 const VIEWS = [
   { id: 'day', label: 'Day' },
@@ -6,8 +7,29 @@ const VIEWS = [
   { id: 'month', label: 'Month' },
   { id: 'agenda', label: 'Agenda' },
   { id: 'insights', label: 'Insights' },
-  { id: 'coins', label: '🪙 Coins' }
+  { id: 'coins', label: 'Coins' }
 ] as const
+
+/** Tab icon for a view: coins get the coin (money-flip loop when the Coins tab
+ *  is ACTIVE, static otherwise); insights gets the twinkle ✦ (shines when the
+ *  Insights tab is ACTIVE, static otherwise). */
+function SegIcon({ id, active }: { id: string; active: boolean }) {
+  if (id === 'coins') {
+    return (
+      <span className="seg-coin">
+        <Coin size={16} flip={active} /> Coins
+      </span>
+    )
+  }
+  if (id === 'insights') {
+    return (
+      <span className="seg-ico">
+        <span className={`twinkle${active ? ' shining' : ''}`}>✦</span> Insights
+      </span>
+    )
+  }
+  return <>{VIEWS.find((v) => v.id === id)?.label}</>
+}
 
 export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
   const ui = useUi()
@@ -18,10 +40,25 @@ export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
     return (
       <div className="toolbar minimal">
         <div className="tb-left">
-          <span className={`premium-heading${isCoins ? ' coins' : ''}`} title="Premium feature">
-            <span className="ph-icon">{isCoins ? '🪙' : '✦'}</span>
-            {isCoins ? 'Coins' : 'Insights'}
-          </span>
+          {isCoins ? (
+            <button
+              className="premium-heading coins clickable"
+              title="Click to turn the coin system off/on"
+              onClick={ui.openCoinSystemConfirm}
+            >
+              <span className="ph-icon">
+                <Coin size={20} roll />
+              </span>
+              Coins
+            </button>
+          ) : (
+            <span className="premium-heading" title="Premium feature">
+              <span className="ph-icon">
+                <span className="twinkle shining">✦</span>
+              </span>
+              Insights
+            </span>
+          )}
         </div>
         <div className="tb-right">
           <div className="segmented">
@@ -31,7 +68,7 @@ export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
                 className={`seg-btn${ui.view === v.id ? ' active' : ''}`}
                 onClick={() => ui.setView(v.id)}
               >
-                {v.label}
+                <SegIcon id={v.id} active={ui.view === v.id} />
               </button>
             ))}
           </div>
@@ -61,20 +98,17 @@ export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
               className={`seg-btn${ui.view === v.id ? ' active' : ''}`}
               onClick={() => ui.setView(v.id)}
             >
-              {v.label}
+              <SegIcon id={v.id} active={ui.view === v.id} />
             </button>
           ))}
         </div>
-        <div className="searchbox">
-          <svg viewBox="0 0 16 16" width="13" height="13"><circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.6" fill="none" /><path d="M10.5 10.5L14 14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-          <input
-            placeholder="Search"
-            value={ui.search}
-            onChange={(e) => ui.setSearch(e.target.value)}
-          />
-        </div>
-        <button className="btn primary new-btn" onClick={() => ui.openQuickAdd()}>
-          ＋ New
+        <button className="icon-btn settings-btn" title="Settings" onClick={ui.openSettings}>
+          <svg viewBox="0 0 16 16" width="15" height="15">
+            <circle cx="8" cy="8" r="2.7" stroke="currentColor" strokeWidth="1.3" fill="none" />
+            <g stroke="currentColor" strokeWidth="1.15" strokeLinecap="round">
+              <path d="M8 1.6v1.9M8 12.5v1.9M1.6 8h1.9M12.5 8h1.9M3.5 3.5l1.35 1.35M11.15 11.15l1.35 1.35M12.5 3.5l-1.35 1.35M4.85 11.15l-1.35 1.35" />
+            </g>
+          </svg>
         </button>
       </div>
     </div>

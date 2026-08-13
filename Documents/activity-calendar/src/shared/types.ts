@@ -70,6 +70,9 @@ export interface RewardMilestone {
   notes: string
   achievedAt: string | null
   createdAt: string
+  /** STICKY reach: true once the stone's cost was EVER met (persisted), so a
+   *  level box never disappears when the net drops. */
+  reached?: boolean
 }
 
 export interface CoinTransaction {
@@ -81,6 +84,18 @@ export interface CoinTransaction {
   type: 'earn' | 'bonus' | 'spend' | 'refund'
   amount: number
   reason: string
+}
+
+export interface BackupEntry {
+  name: string
+  size: number
+  mtime: string
+}
+export interface BackupResult {
+  ok: boolean
+  path: string | null
+  count: number
+  lastBackup: string | null
 }
 
 export interface Api {
@@ -101,6 +116,15 @@ export interface Api {
     get(key: string): Promise<string | null>
     set(key: string, value: string): Promise<void>
   }
+  backups: {
+    list(): Promise<BackupEntry[]>
+    now(): Promise<BackupResult>
+  }
+  app: {
+    info(): Promise<{ version: string; dataDir: string; backupsDir: string }>
+    openDataFolder(): Promise<void>
+    openBackupsFolder(): Promise<void>
+  }
   coins: {
     scoreEvent(eventId: string, originDate: string, scoreType: ScoreType, amount: number, labelId: string | null): Promise<{ earned: boolean; amount: number }>
     getScore(eventId: string, originDate: string): Promise<ScoreRow | null>
@@ -110,7 +134,11 @@ export interface Api {
     restoreScore(eventId: string, originDate: string, scoreType: ScoreType, amount: number, labelId: string | null): Promise<{ restored: boolean }>
     checkIn(): Promise<{ award: boolean; streak: number; amount: number }>
     allDoneCheck(originDate: string): Promise<{ award: boolean; amount: number }>
-    perfectWeek(): Promise<{ award: boolean; amount: number; weekKey: string | null; blockingDay: string | null }>
+    perfectWeek(): Promise<{ award: boolean; amount: number; weekKey: string | null; blockingDay: string | null; streak: number }>
+    perfectMonth(): Promise<{ award: boolean; amount: number; streak: number; level: number | null }>
+    streakMilestone(): Promise<{ award: boolean; amount: number; streak: number; level: number | null }>
+    system(): Promise<boolean>
+    setSystem(on: boolean): Promise<void>
     stats(): Promise<{ today: number; series: Array<{ date: string; amount: number }>; perLabel: Array<{ labelId: string | null; labelName: string; amount: number }> }>
     balance(): Promise<number>
     listTransactions(): Promise<CoinTransaction[]>

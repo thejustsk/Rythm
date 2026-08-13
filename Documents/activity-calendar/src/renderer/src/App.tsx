@@ -8,6 +8,10 @@ import QuickAdd from '@/components/QuickAdd'
 import EventDialog from '@/components/EventDialog'
 import ToastHost from '@/components/ToastHost'
 import ScorePrompt from '@/components/ScorePrompt'
+import SettingsDialog from '@/components/SettingsDialog'
+import CoinScoreFx from '@/components/CoinScoreFx'
+import CoinSystemDialog from '@/components/CoinSystemDialog'
+import { loadTheme } from '@/state/theme'
 import { useCoins } from '@/state/coins'
 import { useToasts } from '@/state/toasts'
 import { useMilestones } from '@/state/milestones'
@@ -26,10 +30,12 @@ export default function App() {
   const ui = useUi()
 
   useEffect(() => {
+    void loadTheme()
     void load()
     void loadCoins()
     void loadMilestones()
-    // daily check-in bonus (once per day)
+    // daily check-in bonus (once per day) — skipped while the coin system is OFF
+    if (!useCoins.getState().systemOn) return
     window.api.coins.checkIn().then((r) => {
       if (r.award) {
         useToasts.getState().push({
@@ -41,6 +47,16 @@ export default function App() {
       }
     })
     // weekly all-done credit: check on every launch too, so it is never missed
+    window.api.coins.perfectMonth().then((r) => {
+      if (r.award) {
+        useToasts.getState().push({
+          message: `🗓️ Perfect month — +${r.amount} 🪙`,
+          kind: 'info',
+          duration: 5000
+        })
+        void loadCoins()
+      }
+    })
     window.api.coins.perfectWeek().then((r) => {
       if (r.award) {
         useToasts.getState().push({
@@ -48,6 +64,16 @@ export default function App() {
           kind: 'info',
           duration: 4500
         })
+    window.api.coins.streakMilestone().then((r) => {
+      if (r.award) {
+        useToasts.getState().push({
+          message: `🎯 ${r.level}-day streak milestone — +${r.amount} 🪙`,
+          kind: 'info',
+          duration: 4500
+        })
+        void loadCoins()
+      }
+    })
         void loadCoins()
       } else if (r.blockingDay) {
         const bd = new Date(r.blockingDay + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
@@ -104,7 +130,10 @@ export default function App() {
       </div>
       {ui.quickAdd?.open && <QuickAdd />}
       {ui.editorKey && <EventDialog />}
+      {ui.settingsOpen && <SettingsDialog />}
+      {ui.coinSystemConfirm && <CoinSystemDialog />}
       <ScorePrompt />
+      <CoinScoreFx />
       <ToastHost />
     </div>
   )

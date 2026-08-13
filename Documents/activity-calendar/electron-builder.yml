@@ -1,0 +1,35 @@
+# Rhythm — Windows packaging (M8)
+# `npm run dist` builds the installer (NSIS) + portable .exe on Windows.
+# `npm run pack:win` produces the plain win-unpacked folder (no installer).
+appId: com.rhythm.calendar
+productName: Rhythm
+copyright: Copyright © 2026 Rhythm
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+asar: true
+npmRebuild: true
+win:
+  icon: assets/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Rhythm
+  artifactName: Rhythm-Setup-${version}.${ext}
+portable:
+  artifactName: Rhythm-Portable-${version}.${ext}
+electronDownload:
+  cache: .cache/electron

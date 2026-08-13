@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   checkInState, allDoneCheck, perfectWeekCheck, weekKey, addDaysIso,
-  CHECKIN_BASE, ALL_DONE_BONUS, PERFECT_WEEK_BONUS
+  CHECKIN_BASE, ALL_DONE_BONUS, PERFECT_WEEK_BONUS,
+  defaultMilestoneCosts, streakAwardLevel, monthAwardLevel,
+  defaultStreakCosts, streakMilestoneLevel, streakMilestoneReward, streakWindow
 } from '../src/main/gamifyCore'
 
 describe('checkInState', () => {
@@ -76,6 +78,66 @@ describe('perfectWeekCheck', () => {
   })
 })
 
+
+describe('defaultMilestoneCosts (growing path)', () => {
+  it('base path: 100…4000 then +2000 forever', () => {
+    expect(defaultMilestoneCosts(8)).toEqual([100, 250, 500, 1000, 1500, 2500, 4000, 6000])
+    expect(defaultMilestoneCosts(10)).toEqual([100, 250, 500, 1000, 1500, 2500, 4000, 6000, 8000, 10000])
+  })
+})
+
+
+describe('streak milestones (5,10,20,30,50,75,+25)', () => {
+  it('generates the path', () => {
+    expect(defaultStreakCosts(9)).toEqual([5, 10, 20, 30, 50, 75, 100, 125, 150])
+  })
+  it('finds the highest reached milestone', () => {
+    expect(streakMilestoneLevel(4)).toBeNull()
+    expect(streakMilestoneLevel(5)).toBe(5)
+    expect(streakMilestoneLevel(7)).toBe(5)
+    expect(streakMilestoneLevel(10)).toBe(10)
+    expect(streakMilestoneLevel(52)).toBe(50)
+    expect(streakMilestoneLevel(120)).toBe(100)
+  })
+  it('reward = milestone x2', () => {
+    expect(streakMilestoneReward(5)).toBe(10)
+    expect(streakMilestoneReward(50)).toBe(100)
+    expect(streakMilestoneReward(100)).toBe(200)
+  })
+  it('window: first milestone is the FIRST stone', () => {
+    const w = streakWindow(5)
+    expect(w.stones).toEqual([5, 10, 20, 30])
+    expect(w.hitIndex).toBe(0)
+    expect(w.nextIndex).toBe(1)
+  })
+  it('window: hit 50 → 30,50,75,100 (hit second)', () => {
+    const w = streakWindow(50)
+    expect(w.stones).toEqual([30, 50, 75, 100])
+    expect(w.hitIndex).toBe(1)
+  })
+  it('window: hit 100 → 75,100,125,150', () => {
+    const w = streakWindow(100)
+    expect(w.stones).toEqual([75, 100, 125, 150])
+    expect(w.hitIndex).toBe(1)
+  })
+  it('window: below first milestone starts at 5', () => {
+    const w = streakWindow(3)
+    expect(w.stones).toEqual([5, 10, 20, 30])
+    expect(w.hitIndex).toBe(-1)
+  })
+})
+
+describe('streakAwardLevel (perfect week on 7-multiples)', () => {
+  it('awards only on 7, 14, 21…', () => {
+    expect(streakAwardLevel(0)).toBeNull()
+    expect(streakAwardLevel(6)).toBeNull()
+    expect(streakAwardLevel(7)).toBe(7)
+    expect(streakAwardLevel(8)).toBeNull()
+    expect(streakAwardLevel(14)).toBe(14)
+    expect(streakAwardLevel(21)).toBe(21)
+  })
+})
+
 describe('helpers', () => {
   it('addDaysIso crosses month boundaries', () => {
     expect(addDaysIso('2026-08-31', 1)).toBe('2026-09-01')
@@ -88,5 +150,11 @@ describe('helpers', () => {
   it('bonus constants', () => {
     expect(ALL_DONE_BONUS).toBe(25)
     expect(PERFECT_WEEK_BONUS).toBe(100)
+  })
+  it('monthAwardLevel (perfect month on 30-multiples)', () => {
+    expect(monthAwardLevel(0)).toBeNull()
+    expect(monthAwardLevel(29)).toBeNull()
+    expect(monthAwardLevel(30)).toBe(30)
+    expect(monthAwardLevel(60)).toBe(60)
   })
 })

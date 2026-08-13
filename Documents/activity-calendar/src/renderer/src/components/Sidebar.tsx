@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useData, useUi, hiddenLabelIds } from '@/state/store'
+import { clickLabel, type Phase } from '@/lib/labelSelect'
 import { useToasts } from '@/state/toasts'
 import { useCoins } from '@/state/coins'
 import { fmtCoins } from '@/lib/gamification'
@@ -10,6 +11,7 @@ import { LABEL_PALETTE, labelColor } from '@/lib/colors'
 import type { Label } from '@shared/types'
 import MiniMonth from './MiniMonth'
 import MilestoneWidget from './MilestoneWidget'
+import Coin from './Coin'
 
 type Glyph = 'none' | 'tick' | 'cross' | 'minus'
 
@@ -29,6 +31,7 @@ export default function Sidebar() {
 
   const hidden = ui.hiddenLabels
   const coinBalance = useCoins((s) => s.balance)
+  const systemOn = useCoins((s) => s.systemOn)
 
   const todayStats = useMemo(() => {
     const day = startOfDay(new Date())
@@ -43,61 +46,31 @@ export default function Sidebar() {
   const parents = labels.filter((l) => !l.parentId)
   const childrenOf = (id: string) => labels.filter((l) => l.parentId === id)
 
-  /** Selection glyph for a row: tick (selected), minus (partial parent), none (unselected, dimmed). */
-  const glyphFor = (l: Label): 'tick' | 'plus' | null => {
-    // default: everything selected → empty circles, no glyphs anywhere
-    if (ui.hiddenLabels.size === 0) return null
+  /** Selection glyph + colour state for a row (cup 3):
+   *  child selected → green tick; parent: saffron (own/partial) / green (all)
+   *  / blue (children only); nothing selected → empty.
+   *  Glyphs exist ONLY when the group has an active phase — a fully-default
+   *  (empty) state shows no glyphs at all, exactly like the old default. */
+  const phaseFor = (l: Label): Phase | null => {
     if (l.parentId) {
-      // child: selected → green tick, else nothing
-      return hidden.has(l.id) ? null : 'tick'
+      const parent = labels.find((p) => p.id === l.parentId)
+      if (!parent || !ui.labelPhases[parent.id]) return null // group inactive
+      return hidden.has(l.id) ? null : 'green'
     }
-    // parent
-    const kids = labels.filter((c) => c.parentId === l.id)
-    const selfSel = !hidden.has(l.id)
-    if (kids.length === 0) return selfSel ? 'tick' : null
-    const anyKidSel = kids.some((k) => !hidden.has(k.id))
-    const allKidsSel = kids.every((k) => !hidden.has(k.id))
-    if (selfSel && allKidsSel) return 'tick'
-    if (anyKidSel) return 'plus'
+    return ui.labelPhases[l.id] ?? null
+  }
+  const glyphFor = (l: Label): 'tick' | 'plus' | null => {
+    const phase = phaseFor(l)
+    if (phase === 'green') return 'tick'
+    if (phase === 'saffron' || phase === 'blue') return 'plus'
     return null
   }
 
   const clickRow = (l: Label) => {
     if (paletteFor) setPaletteFor(null)
-    const next = new Set(ui.hiddenLabels)
-    const pristine = next.size === 0 // all selected
-    const allIds = labels.map((x) => x.id)
-    if (l.parentId) {
-      if (pristine) {
-        // FIRST click = solo-select this child (others dimmed)
-        allIds.forEach((id) => next.add(id))
-        next.delete(l.id)
-      } else if (next.has(l.id)) {
-        next.delete(l.id) // show
-      } else {
-        next.add(l.id) // hide
-      }
-    } else {
-      const kids = labels.filter((c) => c.parentId === l.id)
-      const group = [l.id, ...kids.map((k) => k.id)]
-      if (pristine) {
-        // FIRST click = solo-select the whole group (parent + all children)
-        allIds.forEach((id) => next.add(id))
-        group.forEach((id) => next.delete(id))
-      } else {
-        const allSel = group.every((id) => !next.has(id))
-        if (allSel) {
-          // fully selected → deselect the whole group
-          group.forEach((id) => next.add(id))
-        } else {
-          // partial (blue plus) or none → select the whole group
-          group.forEach((id) => next.delete(id))
-        }
-      }
-    }
-    // safety: never leave everything hidden — snap back to all-selected
-    if (next.size >= labels.length) next.clear()
-    ui.setHiddenLabels([...next])
+    const res = clickLabel(labels, ui.hiddenLabels, ui.labelPhases, l.id)
+    ui.setHiddenLabels([...res.hidden])
+    ui.setLabelPhases(res.phases)
   }
 
   const submitLabel = async () => {
@@ -200,7 +173,7 @@ export default function Sidebar() {
     return (
       <div
         key={l.id}
-        className={`label-row${sub ? ' sub' : ''}${hidden.has(l.id) ? ' hidden' : ''}`}
+        className={`label-row${sub ? ' sub' : ''}${hidden.has(l.id) ? ' hidden' : ''}${phaseFor(l) ? ' sel-' + phaseFor(l) : ''}`}
         onClick={() => clickRow(l)}
       >
         <span className={`lb-check${glyph ? ' ' + glyph : ''}`}>
@@ -367,10 +340,14 @@ export default function Sidebar() {
           <span className="dot-sep">·</span>
           <span className="today-done">{todayStats.done} done</span>
         </div>
-        <div key={coinBalance} className="coin-chip" title="Total Rhythm Coins (all-time balance)">
-          🪙 <b>{fmtCoins(coinBalance)}</b>
-        </div>
-        <MilestoneWidget />
+        {systemOn && (
+          <>
+            <div key={coinBalance} className="coin-chip" title="Total Rhythm Coins (all-time balance)">
+              <Coin size={20} flip /> <b>{fmtCoins(coinBalance)}</b>
+            </div>
+            <MilestoneWidget />
+          </>
+        )}
       </div>
     </aside>
   )

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { Phase } from '@/lib/labelSelect'
 import type { CalendarEvent, EventInput, EventStatus, Label } from '@shared/types'
 
 // ---------------- data store ----------------
@@ -144,9 +145,12 @@ interface UiState {
   cursor: Date
   statusFilter: EventStatus | 'all'
   hiddenLabels: Set<string>
+  labelPhases: Record<string, Phase>
   search: string
   quickAdd: QuickAddState | null
   editorKey: string | null
+  settingsOpen: boolean
+  coinSystemConfirm: boolean
   setView: (v: View) => void
   setCursor: (d: Date) => void
   navigate: (days: number) => void
@@ -154,9 +158,14 @@ interface UiState {
   setStatusFilter: (s: EventStatus | 'all') => void
   toggleLabelHidden: (id: string) => void
   setHiddenLabels: (ids: string[]) => void
+  setLabelPhases: (phases: Record<string, Phase>) => void
   setSearch: (s: string) => void
   openQuickAdd: (date?: string, time?: string) => void
   closeQuickAdd: () => void
+  openSettings: () => void
+  closeSettings: () => void
+  openCoinSystemConfirm: () => void
+  closeCoinSystemConfirm: () => void
   /** Open the editor for a specific event (not its render key). */
   openEditor: (eventId: string, originDate: string) => void
   closeEditor: () => void
@@ -176,9 +185,12 @@ export const useUi = create<UiState>((set, get) => ({
   cursor: new Date(),
   statusFilter: 'all',
   hiddenLabels: new Set<string>(),
+  labelPhases: {},
   search: '',
   quickAdd: null,
   editorKey: null,
+  settingsOpen: false,
+  coinSystemConfirm: false,
   setView: (v) => set({ view: v }),
   setCursor: (d) => set({ cursor: d }),
   navigate: (days) => {
@@ -194,7 +206,8 @@ export const useUi = create<UiState>((set, get) => ({
     else next.add(id)
     set({ hiddenLabels: next })
   },
-  setHiddenLabels: (ids) => set({ hiddenLabels: new Set(ids) }),
+  setHiddenLabels: (ids) => set({ hiddenLabels: new Set(ids), labelPhases: {} }),
+  setLabelPhases: (phases) => set({ labelPhases: phases }),
   setSearch: (s) => set({ search: s }),
   openQuickAdd: (date, time) => {
     const d = date ? new Date(date + 'T00:00:00') : new Date()
@@ -202,6 +215,10 @@ export const useUi = create<UiState>((set, get) => ({
     set({ quickAdd: { open: true, date: date ?? iso(d), time: t } })
   },
   closeQuickAdd: () => set({ quickAdd: null }),
+  openSettings: () => set({ settingsOpen: true }),
+  closeSettings: () => set({ settingsOpen: false }),
+  openCoinSystemConfirm: () => set({ coinSystemConfirm: true }),
+  closeCoinSystemConfirm: () => set({ coinSystemConfirm: false }),
   openEditor: (eventId, originDate) => set({ editorKey: `${eventId}|${originDate}` }),
   closeEditor: () => set({ editorKey: null })
 }))

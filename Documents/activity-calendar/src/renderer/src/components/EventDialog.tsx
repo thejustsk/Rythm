@@ -179,6 +179,8 @@ export default function EventDialog() {
     }
 
     // ---- coin correctness ----
+    const oldOrigin = recurring && !isOverride ? occ.originDate : event.startLocal.slice(0, 10)
+    const dateMoved = oldOrigin !== effOrigin
     // 1) left Done → refund but KEEP the score row (marked refunded) so that
     //    re-marking Done restores silently instead of re-prompting
     if (wasDone && !willBeDone) {
@@ -187,8 +189,7 @@ export default function EventDialog() {
     // 2) still Done but the occurrence's date moved → the old score is stale:
     //    refund it so the new date can be scored once (no double earn)
     else if (wasDone && willBeDone) {
-      const oldOrigin = recurring && !isOverride ? occ.originDate : event.startLocal.slice(0, 10)
-      if (oldOrigin !== effOrigin) {
+      if (dateMoved) {
         const cleared = await coins.clearScores(savedId)
         void cleared
       }
@@ -196,12 +197,24 @@ export default function EventDialog() {
 
     toasts.push({ message: `Saved "${title.trim()}"`, kind: 'info', duration: 2500 })
     // M10.2 bonuses: "all planned done" for the affected day + perfect week
-    if (willBeDone) {
+    // Only for a FRESH completion (status changed to done in this edit) —
+    // re-saving an event that was already done (e.g. done while the coin
+    // system was OFF) must never add coins.
+    if (willBeDone && !wasDone) {
       window.api.coins.allDoneCheck(effOrigin).then((r) => {
         if (r.award) toasts.push({ message: `🎉 All planned done — +${r.amount} 🪙`, kind: 'info', duration: 4000 })
       })
       window.api.coins.perfectWeek().then((r) => {
-        if (r.award) toasts.push({ message: `🏆 Perfect week — +${r.amount} 🪙`, kind: 'info', duration: 4500 })
+        if (r.award) {
+          toasts.push({ message: `🏆 Perfect week — +${r.amount} 🪙`, kind: 'info', duration: 4500 })
+          void useCoins.getState().refresh() // sidebar chip updates instantly
+        }
+      })
+      window.api.coins.streakMilestone().then((r) => {
+        if (r.award) {
+          toasts.push({ message: `🎯 ${r.level}-day streak milestone — +${r.amount} 🪙`, kind: 'info', duration: 4500 })
+          void useCoins.getState().refresh()
+        }
       })
     }
     // gamification: completed → either restore a previously-refunded score
@@ -217,9 +230,16 @@ export default function EventDialog() {
           toasts.push({ message: `Coins restored for "${title.trim()}"`, kind: 'info', duration: 2500 })
         }
         // wasDone → plain re-save → nothing to do
-      } else {
+      } else if (coins.systemOn && (!wasDone || dateMoved)) {
+        // ask "How did it go?" only for a genuine NEW completion:
+        //  - status changed to done in this edit (!wasDone), OR
+        //  - the occurrence's DATE moved while done (dateMoved → the old score
+        //    was cleared above, so this is a fresh completion on the new date)
+        // An event that was ALREADY done and UNCHANGED (e.g. marked done while
+        // the coin system was OFF) must NEVER prompt or earn on re-save.
         coins.setPending({ event: { ...event, id: savedId, startLocal: start, endLocal: end }, originDate: effOrigin })
       }
+      // system OFF → marking done does NOTHING (no prompt, no coins, ever)
     }
     const newStatus = fields.status
     if (ui.statusFilter !== 'all' && ui.statusFilter !== newStatus) {

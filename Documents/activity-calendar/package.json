@@ -1,7 +1,7 @@
 {
   "name": "activity-calendar",
-  "version": "0.1.0",
-  "description": "Rhythm — a personal activity planner & tracker (Google-Calendar-style desktop app)",
+  "version": "1.8.0",
+  "description": "Rhythm \u2014 a personal activity planner & tracker (Google-Calendar-style desktop app)",
   "main": "out/main/index.js",
   "private": true,
   "scripts": {
@@ -9,7 +9,10 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "test": "npm rebuild better-sqlite3 && vitest run && npx @electron/rebuild -f -w better-sqlite3",
-    "postinstall": "npx @electron/rebuild -f -w better-sqlite3"
+    "postinstall": "npx @electron/rebuild -f -w better-sqlite3",
+    "dist": "npm run build && electron-builder --win",
+    "dist:portable": "npm run build && electron-builder --win portable",
+    "pack:win": "npm run build && electron-builder --win dir"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
@@ -29,5 +32,6 @@
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
     "vitest": "^2.1.8"
-  }
+  },
+  "author": "Rhythm"
 }
