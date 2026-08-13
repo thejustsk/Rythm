@@ -14,6 +14,9 @@ export default function QuickAdd() {
   const [title, setTitle] = useState('')
   const [start, setStart] = useState(`${ui.quickAdd!.date}T${ui.quickAdd!.time}`)
   const [end, setEnd] = useState(() => {
+    // honour the default-duration pref (Settings → General)
+    const preset = ui.quickAdd!.end
+    if (preset) return preset
     const [h, m] = ui.quickAdd!.time.split(':').map(Number)
     const eh = (h + 1) % 24
     return `${ui.quickAdd!.date}T${String(eh).padStart(2, '0')}:${String(m).padStart(2, '0')}`

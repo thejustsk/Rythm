@@ -1,9 +1,11 @@
 import { useMemo } from 'react'
 import { useData, useUi, iso } from '@/state/store'
-import { computeOccurrences, fmtHM } from '@/engine/occurrences'
+import { computeOccurrences } from '@/engine/occurrences'
 import { addDays, startOfDay } from '@/engine/recurrence'
 import { resolveEventColor } from '@/lib/colors'
 import { daysBetween } from '@/lib/timegrid'
+import { matchesSearch } from '@/lib/search'
+import { fmtClock } from '@/lib/clock'
 
 /** Agenda: grouped list — Overdue / Today / Tomorrow / This week / Later. */
 export default function AgendaView() {
@@ -21,7 +23,7 @@ export default function AgendaView() {
     const filtered = occs.filter((o) => {
       if (hidden.has(o.event.labelId ?? '')) return false
       if (ui.statusFilter !== 'all' && o.event.status !== ui.statusFilter) return false
-      if (ui.search && !(o.event.title + ' ' + o.event.description).toLowerCase().includes(ui.search.toLowerCase())) return false
+      if (!matchesSearch(o.event, labels, ui.search)) return false
       return true
     })
 
@@ -64,8 +66,8 @@ export default function AgendaView() {
               <button key={o.key} className="agenda-row" onClick={() => ui.openEditor(o.eventId, o.originDate)}>
                 <span className="agenda-date">{dateStr}</span>
                 <span className="agenda-time">
-                  {fmtHM(o.start)}
-                  <span className="muted">–{fmtHM(o.end)}</span>
+                  {fmtClock(o.start, ui.clock24)}
+                  <span className="muted">–{fmtClock(o.end, ui.clock24)}</span>
                 </span>
                 <span className="agenda-dot" style={{ background: color }} />
                 <span className={`agenda-title-text${o.event.status === 'done' ? ' done' : ''}${o.event.status === 'cancelled' ? ' cancelled' : ''}`}>

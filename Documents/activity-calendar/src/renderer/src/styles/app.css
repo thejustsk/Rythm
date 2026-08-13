@@ -6,6 +6,13 @@
   height: 100vh;
 }
 
+/* B.14 accessibility: visible keyboard focus everywhere */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 /* ---------- title bar ---------- */
 .titlebar {
   height: var(--titlebar-h);
@@ -547,9 +554,29 @@
 .month-view { height: 100%; display: flex; flex-direction: column; background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-1); overflow: hidden; }
 .month-head {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: 26px repeat(7, 1fr);
   border-bottom: 1px solid var(--border);
 }
+.month-gutter-head { }
+.month-body { flex: 1; min-height: 0; display: flex; }
+.month-gutter {
+  width: 26px;
+  flex: none;
+  display: grid;
+  grid-template-rows: repeat(6, 1fr);
+  border-right: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.month-wknum {
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.month-wknum:last-child { border-bottom: 0; }
 .month-head div {
   padding: 8px 0;
   text-align: center;
@@ -676,7 +703,13 @@
 }
 .eb-dot.todo { background: #8e8e93; }
 .eb-dot.doing { background: #0a84ff; animation: dotPulse 1.6s ease-in-out infinite; }
+.eb-dot.done { background: var(--green); }
 .eb-dot.cancelled { background: #ff3b30; }
+/* v1.11: the dot is a live status cycle (todo → in progress → done → todo);
+   cancelled dots are inert */
+.eb-dot.clickable { cursor: pointer; transition: transform 0.12s ease, filter 0.12s ease; }
+.eb-dot.clickable:hover { transform: scale(1.45); filter: brightness(1.2); }
+.eb-dot.clickable:active { transform: scale(0.95); }
 @keyframes dotPulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
@@ -1249,31 +1282,67 @@
   --ground: calc(var(--size) * 0.3);
 }
 .rhythm-coin.roll .c3-tilt {
-  animation: rollWheel 3.2s infinite;
+  /* v1.11: synced to the 4.2s drop-roll (was 3.2s — the mismatch made the
+     spin look fake). The keyframes hold the wheel still through the drop +
+     bounces, then spin distance-matched while rolling. */
+  animation: rollWheel 4.2s infinite cubic-bezier(0.25, 0.4, 0.35, 1);
 }
 /* the pill clips the coin so it drops in from the top and "disappears into
    the pill's edge" on the right */
 .premium-heading, .seg-btn { position: relative; overflow: hidden; }
-.premium-heading.coins { --roll: 84px; }
-.seg-btn.active .seg-coin .rhythm-coin { --roll: 54px; }
+/* v1.11: the pill's roll distance is measured in Toolbar (--roll-px = pill
+   width − icon − padding) so the coin ALWAYS rolls exactly to the pill's
+   right edge, whatever the pill's width. The wheel rotation is
+   distance-matched: angle = distance / radius (physics). */
+.premium-heading.coins {
+  --coin-r: 10; /* pill coin radius (px, unitless) */
+  --roll: calc(var(--roll-px, 84) * 1px);
+}
+.seg-btn.active .seg-coin .rhythm-coin { --roll: calc(var(--roll-px, 54) * 1px); }
 @keyframes coinDropRoll {
-  0% { transform: translateX(0) translateY(calc(var(--size) * -3.2)); opacity: 0; animation-timing-function: cubic-bezier(0.55, 0, 1, 0.45); }
-  6% { opacity: 1; animation-timing-function: cubic-bezier(0.55, 0, 1, 0.45); }
-  30% { transform: translateX(0) translateY(var(--ground, 6px)); opacity: 1; animation-timing-function: cubic-bezier(0.2, 0.6, 0.35, 1); }
-  37% { transform: translateX(5px) translateY(calc(var(--ground, 6px) * -1.9)); animation-timing-function: cubic-bezier(0.4, 0, 1, 0.55); }
-  44% { transform: translateX(10px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.25, 0.6, 0.35, 1); }
-  50% { transform: translateX(14px) translateY(calc(var(--ground, 6px) * -0.9)); animation-timing-function: cubic-bezier(0.45, 0, 1, 0.5); }
-  56% { transform: translateX(17px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.3, 0.65, 0.35, 1); }
-  /* roll starts with a gentle acceleration — smooth handoff from the last bounce */
-  64% { transform: translateX(22px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.25, 0.3, 0.3, 1); }
-  92% { transform: translateX(var(--roll, 60px)) translateY(var(--ground, 6px)); opacity: 1; animation-timing-function: linear; }
+  /* drop: pure gravity (ease-in) from above the pill */
+  0% { transform: translateX(0) translateY(calc(var(--size) * -3.4)); opacity: 0; animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.4); }
+  7% { opacity: 1; animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.4); }
+  /* touchdown + damped bounce chain: heights shrink, landings ease-out */
+  29% { transform: translateX(0) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
+  35% { transform: translateX(2px) translateY(calc(var(--ground, 6px) * -2.1)); animation-timing-function: cubic-bezier(0.45, 0, 0.9, 0.5); }
+  42% { transform: translateX(6px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.25, 0.7, 0.35, 1); }
+  47% { transform: translateX(9px) translateY(calc(var(--ground, 6px) * -1.05)); animation-timing-function: cubic-bezier(0.45, 0, 0.9, 0.5); }
+  52% { transform: translateX(12px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.3, 0.7, 0.35, 1); }
+  /* settle and roll: decelerating (ease-out) all the way to the pill's edge */
+  56% { transform: translateX(14px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.3, 0.4, 0.4, 1); }
+  94% { transform: translateX(var(--roll, 60px)) translateY(var(--ground, 6px)); opacity: 1; animation-timing-function: cubic-bezier(0.3, 0.4, 0.4, 1); }
   100% { transform: translateX(var(--roll, 60px)) translateY(var(--ground, 6px)); opacity: 0; }
 }
-/* the coin stands on its edge (face toward the viewer) and the FACE PATTERN
-   spins in its own plane only while it rolls (after the damped bounces) */
+/* the face pattern spins in-plane ONLY while rolling, and the total spin
+   angle equals the roll distance ÷ radius — a real wheel, with a gentle
+   deceleration to match the easing above. */
 @keyframes rollWheel {
-  0%, 64% { transform: rotateZ(0deg) rotateX(90deg); }
-  100% { transform: rotateZ(540deg) rotateX(90deg); }
+  0%, 56% { transform: rotateZ(0deg) rotateX(90deg); }
+  100% { transform: rotateZ(calc(var(--roll-px, 84) / var(--coin-r, 10) * 57.296deg)) rotateX(90deg); }
+}
+/* soft ground shadow that breathes with the bounces (drop → tight → tight) */
+.rhythm-coin.roll::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  width: calc(var(--size) * 0.95);
+  height: calc(var(--size) * 0.24);
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0) 70%);
+  animation: rollShadow 4.2s infinite;
+  z-index: 0;
+  pointer-events: none;
+}
+@keyframes rollShadow {
+  0% { opacity: 0.2; transform: translateX(-50%) scale(0.75); }
+  29% { opacity: 0.85; transform: translateX(-50%) scale(1.08); }
+  35% { opacity: 0.3; transform: translateX(-50%) scale(0.8); }
+  42% { opacity: 0.8; transform: translateX(-50%) scale(1.05); }
+  47% { opacity: 0.4; transform: translateX(-50%) scale(0.88); }
+  52%, 100% { opacity: 0.9; transform: translateX(-50%) scale(1.08); }
 }
 /* ---------- twinkle ✦ (shines when its tab is selected, static otherwise) ---------- */
 .seg-ico {
@@ -2354,6 +2423,80 @@
 
 /* ---------- editor footer ---------- */
 .del-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ---------- keyboard shortcut sheet (B.5) ---------- */
+.shortcut-sheet { width: 430px; max-width: 92vw; }
+.shortcut-hint { font-size: 12px; color: var(--text-2); margin-bottom: 12px; }
+.shortcut-rows { display: flex; flex-direction: column; gap: 9px; }
+.shortcut-row { display: flex; align-items: center; gap: 14px; }
+.shortcut-keys { display: inline-flex; gap: 5px; min-width: 130px; }
+.shortcut-key {
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  font-size: 11.5px;
+  font-weight: 700;
+  font-family: inherit;
+  color: var(--text);
+}
+.shortcut-label { font-size: 12.5px; color: var(--text-2); }
+
+/* ---------- settings tabs (v1.11) ---------- */
+.set-tabs { display: flex; gap: 6px; margin-bottom: 4px; }
+.set-tab {
+  padding: 6px 16px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.set-tab:hover { background: var(--surface-3); }
+.set-tab.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+.set-num {
+  width: 74px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12.5px;
+}
+.set-select {
+  padding: 5px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12.5px;
+}
+.notif-slots { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.notif-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.notif-slot-x {
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+}
+.notif-slot-x:hover { color: var(--red); }
 
 /* ---------- toasts ---------- */
 .toast-host {

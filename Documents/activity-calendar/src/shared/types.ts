@@ -149,6 +149,13 @@ export interface Api {
     update(id: string, patch: { name?: string; icon?: string; cost?: number; notes?: string }): Promise<RewardMilestone>
     remove(id: string): Promise<void>
     claim(id: string): Promise<{ ok: boolean; balance: number }>
+    unclaim(id: string): Promise<{ ok: boolean; balance: number }>
+  }
+  notify: {
+    getConfig(): Promise<{ enabled: boolean; slots: string[]; leadMin: number }>
+    setConfig(cfg: { enabled: boolean; slots: string[]; leadMin: number }): Promise<{ enabled: boolean; slots: string[]; leadMin: number }>
+    test(): Promise<{ ok: boolean }>
+    resetDay(): Promise<{ ok: boolean }>
   }
   window: {
     minimize(): void

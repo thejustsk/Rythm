@@ -68,7 +68,20 @@ export default function MilestonesPanel() {
     await refresh()
     if (res.ok) {
       setCelebrate(m)
-      toasts.push({ message: `Claimed "${m.name}" — ${fmtCoins(m.cost)} 🪙 spent. Enjoy!`, kind: 'info', duration: 4000 })
+      toasts.push({
+        message: `Claimed "${m.name}" — ${fmtCoins(m.cost)} 🪙 spent. Enjoy!`,
+        kind: 'info',
+        duration: 6000,
+        actionLabel: 'Undo',
+        onAction: async () => {
+          const u = await window.api.milestones.unclaim(m.id)
+          if (u.ok) {
+            await refresh()
+            await ms.load()
+            toasts.push({ message: `"${m.name}" refunded — ${fmtCoins(m.cost)} 🪙 back`, kind: 'info', duration: 3500 })
+          }
+        }
+      })
     } else {
       toasts.push({ message: `Not enough coins yet (need ${fmtCoins(m.cost)})`, kind: 'danger', duration: 3500 })
     }

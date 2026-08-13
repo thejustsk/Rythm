@@ -61,7 +61,15 @@ const api: Api = {
     update: (id: string, patch: { name?: string; icon?: string; cost?: number; notes?: string }) =>
       ipcRenderer.invoke('milestones:update', id, patch),
     remove: (id: string) => ipcRenderer.invoke('milestones:remove', id),
-    claim: (id: string) => ipcRenderer.invoke('milestones:claim', id)
+    claim: (id: string) => ipcRenderer.invoke('milestones:claim', id),
+    unclaim: (id: string) => ipcRenderer.invoke('milestones:unclaim', id)
+  },
+  notify: {
+    getConfig: () => ipcRenderer.invoke('notify:getConfig'),
+    setConfig: (cfg: { enabled: boolean; slots: string[]; leadMin: number }) =>
+      ipcRenderer.invoke('notify:setConfig', cfg),
+    test: () => ipcRenderer.invoke('notify:test'),
+    resetDay: () => ipcRenderer.invoke('notify:resetDay')
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),

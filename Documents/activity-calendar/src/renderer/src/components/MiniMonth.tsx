@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { iso } from '@/state/store'
+import { iso, useUi } from '@/state/store'
 import { addDays, startOfDay, daysInMonth } from '@/engine/recurrence'
+import { weekStartOf, type WeekStart } from '@/lib/dates'
 
 interface Props {
   cursor: Date
@@ -11,6 +12,8 @@ const MONTHS = Array.from({ length: 12 }, (_, i) => new Date(2000, i, 1).toLocal
 
 /** Small month grid with a custom month/year selector (no dropdown). */
 export default function MiniMonth({ cursor, onChange }: Props) {
+  const ui = useUi()
+  const weekStart: WeekStart = ui.weekStart === 'sunday' ? 0 : 1
   const today = startOfDay(new Date())
   const [pickerOpen, setPickerOpen] = useState(false)
   const [viewYear, setViewYear] = useState(cursor.getFullYear())
@@ -19,11 +22,11 @@ export default function MiniMonth({ cursor, onChange }: Props) {
   useEffect(() => setViewYear(cursor.getFullYear()), [cursor.getFullYear()])
 
   const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1)
-  const gridStart = addDays(first, 1 - (first.getDay() === 0 ? 7 : first.getDay())) // Monday-start
+  const gridStart = weekStartOf(first, weekStart) // honors Settings → first day of week
 
   // dynamic rows: only the weeks needed to cover the month (4/5/6, not always 6)
-  const monOffset = first.getDay() === 0 ? 6 : first.getDay() - 1 // Mon=0
-  const rowsNeeded = Math.ceil((monOffset + daysInMonth(cursor.getFullYear(), cursor.getMonth())) / 7)
+  const startOffset = weekStart === 0 ? first.getDay() : first.getDay() === 0 ? 6 : first.getDay() - 1
+  const rowsNeeded = Math.ceil((startOffset + daysInMonth(cursor.getFullYear(), cursor.getMonth())) / 7)
   const cells: Date[] = []
   for (let i = 0; i < rowsNeeded * 7; i++) cells.push(addDays(gridStart, i))
 

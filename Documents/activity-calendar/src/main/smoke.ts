@@ -960,17 +960,18 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
 
-    // 2m. status colour dots: doing = blue dot, done = NO dot
+    // 2m. status colour dots: doing = blue dot; done = GREEN dot (v1.11:
+    //     every status dot is a live cycle button, including done)
     const doingDots = await js(`document.querySelectorAll('.eb-dot.doing').length`)
     check('in-progress events show a blue dot', doingDots >= 1, String(doingDots))
-    // done items exist in the month view (past occurrences) — verify no dot there
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Month').click()`)
     await sleep(400)
     const doneBlockDot = await js(`(() => {
       const el = Array.from(document.querySelectorAll('.eb.done')).find((e) => e.querySelector('.eb-title'))
-      return el ? el.querySelector('.eb-dot') === null : 'no done block'
+      const dot = el ? el.querySelector('.eb-dot') : null
+      return dot ? { cls: dot.className, clickable: dot.classList.contains('clickable') } : 'no dot'
     })()`)
-    check('done blocks have NO status dot (struck+dimmed only)', doneBlockDot === true, String(doneBlockDot))
+    check('v1.11: done blocks show a GREEN clickable dot', typeof doneBlockDot === 'object' && doneBlockDot.cls.includes('done') && doneBlockDot.clickable, JSON.stringify(doneBlockDot))
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
 
@@ -2078,7 +2079,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     const promptDuringIntro = await js(`!!document.querySelector('.coin-drop') && !document.querySelector('.reward-batch')`)
     check('reward prompt does NOT appear during the intro', promptDuringIntro)
     const introVer = await js(`document.querySelector('.intro-word-ver')?.textContent ?? ''`)
-    check('intro shows version tag (build identification)', introVer.includes('v1.10.6'), introVer)
+    check('intro shows version tag (build identification)', introVer.includes('v1.11.0'), introVer)
     // v1.10.6: the coin system is named "Rhythm Coins" everywhere
     const naming = await js(`(() => {
       const tab = Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins'))
@@ -3461,6 +3462,286 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`window.api.events.remove('${offEv.id}')`)
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
+
+    // ============ v1.11: POLISH BATCH ============
+    // (1) coin pill: roll distance measured to the pill edge; container-type
+    //     sized; distance-matched wheel; ground shadow pseudo-element
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
+    await js(`(() => { const d = document.querySelector('.coin-drop'); if (d) d.click() })()`)
+    await sleep(800)
+    const coinPill = await js(`(() => {
+      const pill = document.querySelector('.premium-heading.coins')
+      const coin = pill ? pill.querySelector('.rhythm-coin') : null
+      if (!pill || !coin) return null
+      const tilt = coin.querySelector('.c3-tilt')
+      return {
+        rollPx: pill.style.getPropertyValue('--roll-px'),
+        containerType: getComputedStyle(pill).containerType,
+        wheelAnim: tilt ? getComputedStyle(tilt).animationName : '',
+        dropAnim: getComputedStyle(coin).animationName,
+        shadow: getComputedStyle(coin, '::after').animationName,
+        shadowContent: getComputedStyle(coin, '::after').content !== 'none'
+      }
+    })()`)
+    check('v1.11: coin roll measured to the pill edge + authentic wheel + ground shadow', !!coinPill && parseInt(coinPill.rollPx, 10) > 60 && coinPill.wheelAnim === 'rollWheel' && coinPill.dropAnim === 'coinDropRoll' && coinPill.shadow === 'rollShadow' && coinPill.shadowContent, JSON.stringify(coinPill))
+    // the wheel spin must be SYNCED with the drop-roll (4.2s, not the old 3.2s)
+    const wheelSync = await js(`(() => {
+      const coin = document.querySelector('.premium-heading.coins .rhythm-coin')
+      const tilt = coin ? coin.querySelector('.c3-tilt') : null
+      const a = tilt ? getComputedStyle(tilt).animation : ''
+      const m = a.match(/^([0-9]+[.]?[0-9]*)s/)
+      return { anim: a, secs: m ? parseFloat(m[1]) : 0 }
+    })()`)
+    check('v1.11: wheel spin synced to the 4.2s drop-roll', wheelSync.secs === 4.2, JSON.stringify(wheelSync))
+    // wheel keyframe must be distance-matched (no fixed 540deg)
+    const wheelKf = await js(`(() => {
+      for (const ss of Array.from(document.styleSheets)) {
+        let rules = []
+        try { rules = ss.cssRules } catch { rules = [] }
+        for (const r of rules) {
+          if (r.name && r.name.includes('rollWheel')) return (r.cssText || '').slice(0, 400)
+        }
+      }
+      return ''
+    })()`)
+    check('v1.11: wheel spin = distance/radius (no fixed degrees)', wheelKf.includes('57.296') && wheelKf.includes('--roll-px'), wheelKf)
+
+    // (2) month view: ISO week numbers in the gutter
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Month').click()`)
+    await sleep(500)
+    const wkNum = await js(`(() => {
+      const nums = Array.from(document.querySelectorAll('.month-wknum')).map((e) => e.textContent.trim())
+      const first = document.querySelector('.month-gutter')
+      return { nums, count: nums.length, hasGutter: !!first }
+    })()`)
+    check('v1.11: month view shows ISO week numbers in the gutter', wkNum.hasGutter && wkNum.count === 6 && wkNum.nums.every((n) => /^[0-9]{1,2}$/.test(n)), JSON.stringify(wkNum))
+
+    // (3) status dot cycle — single event: todo → doing → done → todo
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    dbRun("DELETE FROM events WHERE title LIKE 'DotTest%' OR title LIKE 'DotRecur%' OR title LIKE 'DotCanc%'")
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(300)
+    await js(`document.querySelector('.today-btn')?.click()`)
+    await sleep(500)
+    await js(`window.api.events.create({ title: 'DotTest', description: '', startLocal: '${TODAY}T10:00', endLocal: '${TODAY}T11:00', allDay: false, labelId: null, colorOverride: null, status: 'todo', rrule: null, exdates: '[]' })`)
+    await js(`window.api.events.create({ title: 'DotRecur', description: '', startLocal: '${TODAY}T12:00', endLocal: '${TODAY}T13:00', allDay: false, labelId: null, colorOverride: null, status: 'todo', rrule: 'FREQ=WEEKLY', exdates: '[]' })`)
+    await js(`window.api.events.create({ title: 'DotCanc', description: '', startLocal: '${TODAY}T14:00', endLocal: '${TODAY}T15:00', allDay: false, labelId: null, colorOverride: null, status: 'cancelled', rrule: null, exdates: '[]' })`)
+    await js(`window.__rhythmData.load()`)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(700)
+    const clickDot = async (title: string) => {
+      await js(`(() => { const eb = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('${title}')); const dot = eb && eb.querySelector('.eb-dot'); if (dot) dot.click(); return !!dot })()`)
+      await sleep(700)
+    }
+    await clickDot('DotTest')
+    const st1 = await js(`window.api.events.list().then((es) => es.find((e) => e.title === 'DotTest')?.status ?? '')`)
+    await clickDot('DotTest')
+    const st2 = await js(`window.api.events.list().then((es) => es.find((e) => e.title === 'DotTest')?.status ?? '')`)
+    await clickDot('DotTest')
+    const st3 = await js(`window.api.events.list().then((es) => es.find((e) => e.title === 'DotTest')?.status ?? '')`)
+    check('v1.11: status dot cycles todo → doing → done → todo (single event)', st1 === 'doing' && st2 === 'done' && st3 === 'todo', JSON.stringify({ st1, st2, st3 }))
+    // recurring: one click creates a ONE-OFF override (parent untouched)
+    await clickDot('DotRecur')
+    const recur = await js(`window.api.events.list().then((es) => ({
+      master: es.find((e) => e.title === 'DotRecur' && !e.parentId)?.status ?? '',
+      override: es.find((e) => e.title === 'DotRecur' && e.parentId)?.status ?? null,
+      overrideOrigin: es.find((e) => e.title === 'DotRecur' && e.parentId)?.originDate ?? null
+    }))`)
+    check('v1.11: recurring dot click → THIS occurrence only (override created, master untouched)', recur.master === 'todo' && recur.override === 'doing' && recur.overrideOrigin === TODAY, JSON.stringify(recur))
+    // cancelled: dot is inert
+    await clickDot('DotCanc')
+    const canc = await js(`window.api.events.list().then((es) => es.find((e) => e.title === 'DotCanc')?.status ?? '')`)
+    check('v1.11: cancelled dot is NOT clickable', canc === 'cancelled', canc)
+    dbRun("DELETE FROM events WHERE title LIKE 'DotTest%' OR title LIKE 'DotRecur%' OR title LIKE 'DotCanc%'")
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(500)
+    // dismiss any lingering score prompt (the dot cycle to 'done' opens it)
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`)
+    await sleep(300)
+    await js(`(() => { const s = document.querySelector('.score-prompt'); if (s) s.remove(); return !!s })()`)
+    await sleep(200)
+
+    // (4) edge scrolling: day/week at the edges + month wheel
+    const titleNow = () => js(`document.querySelector('.tb-title')?.textContent ?? ''`)
+    const t0 = await titleNow()
+    // day view: bottom → hard scroll up pulls the NEXT day
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Day').click()`)
+    await sleep(500)
+    await js(`(() => { const el = document.querySelector('.week-body'); if (el) { el.scrollTop = el.scrollHeight; el.dispatchEvent(new WheelEvent('wheel', { deltaY: 220, bubbles: true, cancelable: true })) } return true })()`)
+    await sleep(900)
+    const t1 = await titleNow()
+    check('v1.11: day view — hard scroll at the bottom pulls the NEXT day', t1 !== t0, JSON.stringify({ t0, t1 }))
+    // day view: top → hard scroll down pulls the PREVIOUS day
+    const t1b = await titleNow()
+    await js(`(() => { const el = document.querySelector('.week-body'); if (el) { el.scrollTop = 0; el.dispatchEvent(new WheelEvent('wheel', { deltaY: -220, bubbles: true, cancelable: true })) } return true })()`)
+    await sleep(900)
+    const t2 = await titleNow()
+    check('v1.11: day view — hard scroll at the top pulls the PREVIOUS day', t2 !== t1b, JSON.stringify({ t1b, t2 }))
+    // week view: top → previous week
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(500)
+    const t3 = await titleNow()
+    await js(`(() => { const el = document.querySelector('.week-body'); if (el) { el.scrollTop = 0; el.dispatchEvent(new WheelEvent('wheel', { deltaY: -220, bubbles: true, cancelable: true })) } return true })()`)
+    await sleep(900)
+    const t4 = await titleNow()
+    check('v1.11: week view — hard scroll at the top pulls the PREVIOUS week', t4 !== t3, JSON.stringify({ t3, t4 }))
+    // month view: strong wheel flips the month
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Month').click()`)
+    await sleep(500)
+    const t5 = await titleNow()
+    await js(`(() => { const el = document.querySelector('.month-body'); if (el) { el.dispatchEvent(new WheelEvent('wheel', { deltaY: 220, bubbles: true, cancelable: true })) } return true })()`)
+    await sleep(1000)
+    const t6 = await titleNow()
+    check('v1.11: month view — strong wheel flips to the NEXT month', t6 !== t5, JSON.stringify({ t5, t6 }))
+
+    // (5) settings tabs + notification config
+    await js(`document.querySelector('.settings-btn')?.click()`)
+    await sleep(500)
+    const setTabs = await js(`Array.from(document.querySelectorAll('.set-tab')).map((t) => t.textContent.trim())`)
+    check('v1.11: settings has General / Notifications / About tabs', setTabs.join(',') === 'General,Notifications,About', JSON.stringify(setTabs))
+    await js(`Array.from(document.querySelectorAll('.set-tab')).find((t) => t.textContent.includes('Notifications'))?.click()`)
+    await sleep(400)
+    const notifCfg0 = await js(`window.api.notify.getConfig()`)
+    const slotCount = Array.isArray(notifCfg0.slots) ? notifCfg0.slots.length : 0
+    await js(`(() => { const inp = document.querySelector('.set-num[type=time]'); if (!inp) return false; const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(inp, '21:30'); inp.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
+    await sleep(200)
+    await js(`Array.from(document.querySelectorAll('.set-row .btn')).find((b) => b.textContent.includes('Add time'))?.click()`)
+    await sleep(500)
+    const notifCfg1 = await js(`window.api.notify.getConfig()`)
+    check('v1.11: notifications — add a reminder time persists', notifCfg1.slots.length === slotCount + 1 && notifCfg1.slots.includes('21:30'), JSON.stringify(notifCfg1))
+    // remove it again (leave the DB as found)
+    await js(`(() => { const x = Array.from(document.querySelectorAll('.notif-slot')).find((s) => s.textContent.includes('21:30'))?.querySelector('.notif-slot-x'); if (x) x.click(); return !!x })()`)
+    await sleep(500)
+    await js(`Array.from(document.querySelectorAll('.dialog-actions .btn')).find((b) => b.textContent.trim() === 'Done')?.click()`)
+    await sleep(400)
+
+    // (6) search matches LABEL NAMES
+    const lbl = await js(`window.api.labels.create('V11Label', '#5e5ce6', null)`)
+    await js(`window.api.events.create({ title: 'V11Search', description: '', startLocal: '${TODAY}T09:00', endLocal: '${TODAY}T09:30', allDay: false, labelId: '${lbl.id}', colorOverride: null, status: 'todo', rrule: null, exdates: '[]' })`)
+    await js(`window.__rhythmData.load()`) // the store must see the new event + label
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Agenda').click()`)
+    await sleep(500)
+    await js(`(() => { const inp = document.querySelector('.pill-search input'); if (!inp) return false; const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(inp, 'v11label'); inp.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
+    await sleep(600)
+    const searchHit = await js(`Array.from(document.querySelectorAll('.agenda-row')).some((r) => r.textContent.includes('V11Search'))`)
+    check('v1.11: search matches LABEL names (agenda shows the labelled event)', searchHit)
+    await js(`(() => { const inp = document.querySelector('.pill-search input'); if (!inp) return false; const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(inp, ''); inp.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
+    await sleep(400)
+    await js(`window.api.events.remove(${JSON.stringify((await js('window.api.events.list().then((es) => es.find((e) => e.title === "V11Search")?.id)')) as string)})`)
+    await js(`window.api.labels.remove('${lbl.id}')`)
+
+    // (7) milestone claim → UNDO restores the coins
+    const msUndo = await js(`(async () => {
+      const m = await window.api.milestones.create('UndoMe', '🎁', 10, '')
+      await window.api.coins.setSystem(true)
+      const before = await window.api.coins.balance()
+      const claimed = await window.api.milestones.claim(m.id)
+      const afterClaim = await window.api.coins.balance()
+      const undone = await window.api.milestones.unclaim(m.id)
+      const afterUndo = await window.api.coins.balance()
+      const spends = await window.api.coins.listTransactions().then((txs) => txs.filter((t) => t.type === 'spend' && t.reason.includes('UndoMe')))
+      await window.api.milestones.remove(m.id)
+      return { before, claimed, afterClaim, afterUndo, spends }
+    })()`)
+    check('v1.11: milestone claim → Undo restores coins (spend row removed)', msUndo.claimed.ok && msUndo.afterClaim === msUndo.before - 10 && msUndo.afterUndo === msUndo.before && msUndo.spends.length === 0, JSON.stringify(msUndo))
+
+    // (8) keyboard shortcuts + cheat sheet
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Month').click()`)
+    await sleep(400)
+    await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', bubbles: true }))`)
+    await sleep(500)
+    const shortView = await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.classList.contains('active'))?.textContent.trim() ?? ''`)
+    await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))`)
+    await sleep(400)
+    const sheetOpen = await js(`!!document.querySelector('.shortcut-sheet')`)
+    await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`)
+    await sleep(300)
+    const sheetClosed = await js(`!document.querySelector('.shortcut-sheet')`)
+    check('v1.11: shortcuts — W switches to Week, ? opens the cheat sheet, Esc closes', shortView.includes('Week') && sheetOpen && sheetClosed, JSON.stringify({ shortView, sheetOpen, sheetClosed }))
+
+    // (9) heatmap popover closes on outside click
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Insights')).click()`)
+    await sleep(700)
+    await js(`document.querySelector('.heat-head-btn')?.click()`)
+    await sleep(300)
+    const popOpen = await js(`!!document.querySelector('.heat-pop')`)
+    await js(`document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`)
+    await sleep(300)
+    const popClosed = await js(`!document.querySelector('.heat-pop')`)
+    check('v1.11: heatmap threshold popover closes on outside click', popOpen && popClosed, JSON.stringify({ popOpen, popClosed }))
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+
+    // (10) General settings: clock 12h, week start Sunday, day start hour, default duration
+    await js(`document.querySelector('.settings-btn')?.click()`)
+    await sleep(500)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.set-tab')).find((t) => t.textContent === 'General'); if (b) b.click(); return !!b })()`)
+    await sleep(300)
+    await js(`Array.from(document.querySelectorAll('.set-row .seg-btn')).find((b) => b.textContent.includes('12-hour'))?.click()`)
+    await sleep(400)
+    const hourLabel12 = await js(`Array.from(document.querySelectorAll('.hour-label')).map((e) => e.textContent.trim()).filter((t) => t.includes('AM') || t.includes('PM')).length`)
+    await js(`Array.from(document.querySelectorAll('.set-row .seg-btn')).find((b) => b.textContent.includes('24-hour'))?.click()`)
+    await sleep(400)
+    await js(`Array.from(document.querySelectorAll('.set-row .seg-btn')).find((b) => b.textContent.trim() === 'Sunday')?.click()`)
+    await sleep(500)
+    const firstDow = await js(`document.querySelector('.week-day-head .wd-name')?.textContent.trim() ?? ''`)
+    await js(`Array.from(document.querySelectorAll('.set-row .seg-btn')).find((b) => b.textContent.trim() === 'Monday')?.click()`)
+    await sleep(500)
+    await js(`(() => { const inp = Array.from(document.querySelectorAll('.set-num')).find((i) => i.getAttribute('aria-label') === 'Day starts at hour'); if (!inp) return false; const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(inp, '8'); inp.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
+    await sleep(600)
+    const scrollTop8 = await js(`(() => {
+      const el = document.querySelector('.week-body')
+      if (!el) return { top: -1, max: -1 }
+      return { top: el.scrollTop, max: el.scrollHeight - el.clientHeight }
+    })()`)
+    await js(`(() => { const inp = Array.from(document.querySelectorAll('.set-num')).find((i) => i.getAttribute('aria-label') === 'Day starts at hour'); if (!inp) return false; const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(inp, '0'); inp.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
+    await sleep(400)
+    await js(`Array.from(document.querySelectorAll('.dialog-actions .btn')).find((b) => b.textContent.trim() === 'Done')?.click()`)
+    await sleep(400)
+    check('v1.11: 12h clock shows AM/PM labels', hourLabel12 >= 2, String(hourLabel12))
+    check('v1.11: first day of week = Sunday → week starts Sun', firstDow === 'Sun', firstDow)
+    check('v1.11: day start hour scrolls the grid (8:00 = 264px, clamped to the real max)', scrollTop8.top === Math.min(264, scrollTop8.max) && scrollTop8.top > 0, JSON.stringify(scrollTop8))
+    // default duration: set 90 → click the grid → quick add end = start + 90
+    await js(`document.querySelector('.settings-btn')?.click()`)
+    await sleep(500)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.set-tab')).find((t) => t.textContent === 'General'); if (b) b.click(); return !!b })()`)
+    await sleep(300)
+    await js(`(() => { const inp = Array.from(document.querySelectorAll('.set-num')).find((i) => i.getAttribute('aria-label') === 'Default activity length in minutes'); if (!inp) return false; const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(inp, '90'); inp.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
+    await sleep(400)
+    await js(`Array.from(document.querySelectorAll('.dialog-actions .btn')).find((b) => b.textContent.trim() === 'Done')?.click()`)
+    await sleep(300)
+    await js(`(() => { const col = document.querySelector('.day-col'); if (!col) return false; const r = col.getBoundingClientRect(); col.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + 100 })); return true })()`)
+    await sleep(600)
+    const durAdd = await js(`(() => {
+      const inputs = Array.from(document.querySelectorAll('.quickadd input[type=datetime-local]'))
+      if (inputs.length < 2) return { ok: false }
+      const s = new Date(inputs[0].value)
+      const e = new Date(inputs[1].value)
+      return { ok: true, mins: (e.getTime() - s.getTime()) / 60000 }
+    })()`)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.quickadd .dialog-actions .btn')).find((x) => x.textContent.includes('Cancel') || x.textContent.includes('close')); if (b) b.click(); return !!b })()`)
+    await sleep(300)
+    await js(`(() => { const ov = document.querySelector('.overlay'); if (ov) ov.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); return !!ov })()`)
+    await sleep(300)
+    check('v1.11: default duration (90 min) applied to quick-add', durAdd.ok && durAdd.mins === 90, JSON.stringify(durAdd))
+    // restore the default duration
+    await js(`window.api.settings.set('defaultDuration', '60')`)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+
+
+    // (11) accessibility: aria-labels on icon buttons + focus-visible outline
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    const a11y = await js(`(() => ({
+      settings: document.querySelector('.settings-btn')?.getAttribute('aria-label') ?? '',
+      prev: Array.from(document.querySelectorAll('.icon-btn')).find((b) => b.getAttribute('aria-label') === 'Previous') ? true : false,
+      next: Array.from(document.querySelectorAll('.icon-btn')).find((b) => b.getAttribute('aria-label') === 'Next') ? true : false,
+      shortcuts: document.querySelector('.shortcuts-btn')?.getAttribute('aria-label') ?? ''
+    }))()`)
+    check('v1.11: icon buttons carry aria-labels (settings/prev/next/shortcuts)', a11y.settings === 'Settings' && a11y.prev && a11y.next && a11y.shortcuts === 'Keyboard shortcuts', JSON.stringify(a11y))
+
     // v1.10.6: the ledger renders EVERY transaction — no 20-row cap in the UI,
     // no LIMIT in the IPC (by this point the suite has dozens of entries)
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)

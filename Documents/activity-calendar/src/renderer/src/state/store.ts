@@ -10,7 +10,7 @@ interface DataState {
   loaded: boolean
   load: () => Promise<void>
   createEvent: (input: EventInput) => Promise<CalendarEvent>
-  updateEvent: (id: string, patch: Partial<EventInput>) => Promise<void>
+  updateEvent: (id: string, patch: Partial<EventInput>) => Promise<CalendarEvent>
   removeEvent: (id: string) => Promise<void>
   /** Re-create a previously deleted event with its original id (undo). */
   restoreEvent: (ev: CalendarEvent) => Promise<void>
@@ -42,6 +42,7 @@ export const useData = create<DataState>((set, get) => ({
   updateEvent: async (id, patch) => {
     const ev = await window.api.events.update(id, patch)
     set({ events: get().events.map((e) => (e.id === id ? ev : e)) })
+    return ev
   },
 
   removeEvent: async (id) => {
@@ -138,6 +139,7 @@ export interface QuickAddState {
   open: boolean
   date: string // 'yyyy-MM-dd'
   time: string // 'HH:mm'
+  end?: string // 'yyyy-MM-ddTHH:mm' (from the default-duration pref)
 }
 
 interface UiState {
@@ -151,6 +153,13 @@ interface UiState {
   editorKey: string | null
   settingsOpen: boolean
   coinSystemConfirm: boolean
+  shortcutsOpen: boolean
+  /** user prefs (Settings → General): first day of week, start hour, clock, duration */
+  weekStart: 'monday' | 'sunday'
+  dayStartHour: number
+  clock24: boolean
+  defaultDuration: number
+  setPrefs: (p: { weekStart: 'monday' | 'sunday'; dayStartHour: number; clock24: boolean; defaultDuration: number }) => void
   setView: (v: View) => void
   setCursor: (d: Date) => void
   navigate: (days: number) => void
@@ -160,12 +169,14 @@ interface UiState {
   setHiddenLabels: (ids: string[]) => void
   setLabelPhases: (phases: Record<string, Phase>) => void
   setSearch: (s: string) => void
-  openQuickAdd: (date?: string, time?: string) => void
+  openQuickAdd: (date?: string, time?: string, durationMin?: number) => void
   closeQuickAdd: () => void
   openSettings: () => void
   closeSettings: () => void
   openCoinSystemConfirm: () => void
   closeCoinSystemConfirm: () => void
+  toggleShortcuts: () => void
+  closeShortcuts: () => void
   /** Open the editor for a specific event (not its render key). */
   openEditor: (eventId: string, originDate: string) => void
   closeEditor: () => void
@@ -176,6 +187,8 @@ export const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${p
 export const hm = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`
 
 const initialView = (): View => {
+  // guard for non-browser (unit tests) environments
+  if (typeof location === 'undefined') return 'month'
   const v = new URLSearchParams(location.search).get('view')
   return v === 'day' || v === 'week' || v === 'month' || v === 'agenda' || v === 'insights' || v === 'coins' ? v : 'month'
 }
@@ -191,6 +204,12 @@ export const useUi = create<UiState>((set, get) => ({
   editorKey: null,
   settingsOpen: false,
   coinSystemConfirm: false,
+  shortcutsOpen: false,
+  weekStart: 'monday',
+  dayStartHour: 0,
+  clock24: true,
+  defaultDuration: 60,
+  setPrefs: (p) => set({ weekStart: p.weekStart, dayStartHour: p.dayStartHour, clock24: p.clock24, defaultDuration: p.defaultDuration }),
   setView: (v) => set({ view: v }),
   setCursor: (d) => set({ cursor: d }),
   navigate: (days) => {
@@ -209,21 +228,40 @@ export const useUi = create<UiState>((set, get) => ({
   setHiddenLabels: (ids) => set({ hiddenLabels: new Set(ids), labelPhases: {} }),
   setLabelPhases: (phases) => set({ labelPhases: phases }),
   setSearch: (s) => set({ search: s }),
-  openQuickAdd: (date, time) => {
+  openQuickAdd: (date, time, durationMin) => {
     const d = date ? new Date(date + 'T00:00:00') : new Date()
     const t = time ?? '09:00'
-    set({ quickAdd: { open: true, date: date ?? iso(d), time: t } })
+    const [hh, mm] = t.split(':').map(Number)
+    const dur = Math.min(480, Math.max(5, durationMin ?? get().defaultDuration))
+    const end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), hh, mm + dur)
+    set({
+      quickAdd: {
+        open: true,
+        date: date ?? iso(d),
+        time: t,
+        end: `${iso(end)}T${hm(end)}`
+      }
+    })
   },
   closeQuickAdd: () => set({ quickAdd: null }),
   openSettings: () => set({ settingsOpen: true }),
   closeSettings: () => set({ settingsOpen: false }),
   openCoinSystemConfirm: () => set({ coinSystemConfirm: true }),
   closeCoinSystemConfirm: () => set({ coinSystemConfirm: false }),
+  toggleShortcuts: () => set((s) => ({ shortcutsOpen: !s.shortcutsOpen })),
+  closeShortcuts: () => set({ shortcutsOpen: false }),
   openEditor: (eventId, originDate) => set({ editorKey: `${eventId}|${originDate}` }),
   closeEditor: () => set({ editorKey: null })
 }))
 
 /** Labels that are hidden (filtered out) — hiding a parent hides its children too. */
+// Test hook for the automated smoke suite — harmless in production.
+if (typeof window !== 'undefined') {
+  ;(window as unknown as { __rhythmData: { load: () => Promise<void> } }).__rhythmData = {
+    load: () => useData.getState().load()
+  }
+}
+
 export function hiddenLabelIds(labels: Label[], hidden: Set<string>): Set<string> {
   const out = new Set<string>()
   for (const l of labels) {

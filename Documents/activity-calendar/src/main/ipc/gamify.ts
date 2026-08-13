@@ -597,6 +597,29 @@ export function registerGamifyHandlers(db: Db): void {
     return { ok: true, balance: nb }
   })
 
+  /** Undo a milestone claim (item B.13): removes the latest un-refunded spend
+   *  for that milestone and clears its achieved_at. Idempotent — no spend, no-op. */
+  ipcMain.handle('milestones:unclaim', (_e, id: string) => {
+    const m = db.prepare('SELECT * FROM reward_milestones WHERE id = ?').get(id) as any
+    if (!m) return { ok: false, balance: 0 }
+    const spend = db
+      .prepare(
+        `SELECT id FROM coin_transactions
+         WHERE type = 'spend' AND reason = 'Milestone: ' || ? AND refunded_at IS NULL
+         ORDER BY ts DESC LIMIT 1`
+      )
+      .get(m.name) as { id: string } | undefined
+    if (!spend) return { ok: false, balance: 0 }
+    db.transaction(() => {
+      db.prepare('DELETE FROM coin_transactions WHERE id = ?').run(spend.id)
+      db.prepare('UPDATE reward_milestones SET achieved_at = NULL WHERE id = ?').run(id)
+    })()
+    const nb = db
+      .prepare("SELECT COALESCE(SUM(CASE WHEN type IN ('spend','refund') THEN -amount ELSE amount END), 0) AS b FROM coin_transactions")
+      .get() as { b: number }
+    return { ok: true, balance: nb }
+  })
+
   ipcMain.handle('coins:balance', () => {
     const r = db
       .prepare("SELECT COALESCE(SUM(CASE WHEN type IN ('spend','refund') THEN -amount ELSE amount END), 0) AS b FROM coin_transactions")

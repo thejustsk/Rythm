@@ -83,6 +83,18 @@ export default function InsightsView() {
   const [heatOpen, setHeatOpen] = useState(false)
   const [heatT1, setHeatT1] = useState(2) // hours: low → medium boundary
   const [heatT2, setHeatT2] = useState(5) // hours: medium → high boundary
+  const heatTitleRef = useRef<HTMLDivElement>(null)
+
+  // B.6: close the threshold popover on outside click
+  useEffect(() => {
+    if (!heatOpen) return
+    const onDown = (e: MouseEvent) => {
+      const el = heatTitleRef.current
+      if (el && !el.contains(e.target as Node)) setHeatOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [heatOpen])
 
   useEffect(() => {
     void (async () => {
@@ -473,7 +485,7 @@ export default function InsightsView() {
           </div>
 
           <div className="ins-panel wide">
-            <div className="ins-panel-title">
+            <div className="ins-panel-title" ref={heatTitleRef}>
               <button className="heat-head-btn" title="Change the hour thresholds for the 3 colours" onClick={() => setHeatOpen((o) => !o)}>
                 Activity heatmap ⚙
               </button>

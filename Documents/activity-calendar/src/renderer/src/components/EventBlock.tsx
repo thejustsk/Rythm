@@ -1,9 +1,11 @@
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
+import { memo, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import type { Occurrence } from '@/engine/occurrences'
 import { useData } from '@/state/store'
 import { resolveEventColor, readableText } from '@/lib/colors'
-import { fmtHM } from '@/engine/occurrences'
 import { PX_PER_MIN } from '@/lib/timegrid'
+import { cycleOccurrenceStatus, nextStatus } from '@/lib/statusCycle'
+import { useUi } from '@/state/store'
+import { fmtClock } from '@/lib/clock'
 
 interface Props {
   occ: Occurrence
@@ -17,12 +19,15 @@ interface Props {
 }
 
 /** The colourful heart of the app: one activity block. */
-export default function EventBlock({ occ, box, compact, onClick, onDragStart, onResizeStart }: Props) {
+function EventBlock({ occ, box, compact, onClick, onDragStart, onResizeStart }: Props) {
   const { labels } = useData()
+  const clock24 = useUi((s) => s.clock24)
   const ev = occ.event
   const color = resolveEventColor(ev, labels)
   const text = readableText(color)
   const status = ev.status
+  const cancelled = status === 'cancelled'
+  const clickable = !cancelled
 
   const cls = ['eb']
   if (status === 'done') cls.push('done')
@@ -48,10 +53,24 @@ export default function EventBlock({ occ, box, compact, onClick, onDragStart, on
       title={`${ev.title} · ${status}`}
     >
       <div className="eb-title-row">
-        {/* status colour dots: todo=grey, doing=blue, cancelled=red.
-            done has NO dot — it's already struck through and dimmed. */}
-        {status !== 'done' && <span className={`eb-dot ${status}`} />}
-        {status === 'cancelled' ? (
+        {/* status colour dots (clickable cycle: todo → in progress → done →
+            todo). Cancelled is NOT clickable — change it in the edit popup. */}
+        <button
+          type="button"
+          className={`eb-dot ${status}${clickable ? ' clickable' : ''}`}
+          title={
+            cancelled
+              ? 'Cancelled — change status in the edit dialog'
+              : `Status: ${status} — click to mark ${nextStatus(status)}`
+          }
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (!clickable) return
+            void cycleOccurrenceStatus(occ)
+          }}
+        />
+        {cancelled ? (
           <s className="eb-title">{ev.title}</s>
         ) : (
           <span className="eb-title">{ev.title}</span>
@@ -59,7 +78,7 @@ export default function EventBlock({ occ, box, compact, onClick, onDragStart, on
       </div>
       {!compact && (
         <span className="eb-time">
-          {fmtHM(occ.start)}–{fmtHM(occ.end)}
+          {fmtClock(occ.start, clock24)}–{fmtClock(occ.end, clock24)}
         </span>
       )}
       {!compact && onResizeStart && (
@@ -74,3 +93,5 @@ export default function EventBlock({ occ, box, compact, onClick, onDragStart, on
     </div>
   )
 }
+
+export default memo(EventBlock)

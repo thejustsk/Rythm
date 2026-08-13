@@ -142,11 +142,13 @@ export const useCoins = create<CoinsState>((set, get) => ({
 }))
 
 // Test hook for the automated smoke suite — harmless in production.
-;(window as unknown as { __rhythmCoins: { refresh: () => Promise<void> } }).__rhythmCoins = {
-  refresh: () => useCoins.getState().refresh()
-}
+if (typeof window !== 'undefined') {
+  ;(window as unknown as { __rhythmCoins: { refresh: () => Promise<void> } }).__rhythmCoins = {
+    refresh: () => useCoins.getState().refresh()
+  }
 
-// Test hook (smoke + fx screenshot harness) — harmless in production.
-;(window as unknown as { __rhythmCoins2: { fireScoreFx: () => void } }).__rhythmCoins2 = {
-  fireScoreFx: () => useCoins.getState().fireScoreFx()
+  // Test hook (smoke + fx screenshot harness) — harmless in production.
+  ;(window as unknown as { __rhythmCoins2: { fireScoreFx: () => void } }).__rhythmCoins2 = {
+    fireScoreFx: () => useCoins.getState().fireScoreFx()
+  }
 }

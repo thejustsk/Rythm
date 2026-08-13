@@ -4,22 +4,24 @@ import { computeOccurrences } from '@/engine/occurrences'
 import { startOfDay, addDays } from '@/engine/recurrence'
 import type { EventStatus } from '@shared/types'
 
+import { T } from '@/lib/strings'
+import { weekStartOf, type WeekStart } from '@/lib/dates'
+
 const PILLS: Array<{ id: EventStatus | 'all'; label: string }> = [
-  { id: 'all', label: 'All' },
-  { id: 'todo', label: 'To Do' },
-  { id: 'doing', label: 'In Progress' },
-  { id: 'done', label: 'Done' },
-  { id: 'cancelled', label: 'Cancelled' }
+  { id: 'all', label: T.statuses.all },
+  { id: 'todo', label: T.statuses.todo },
+  { id: 'doing', label: T.statuses.doing },
+  { id: 'done', label: T.statuses.done },
+  { id: 'cancelled', label: T.statuses.cancelled }
 ]
 
 /** The visible time window for the current view — counts are scoped to it
  *  (day = that day, week = Mon–Sun, month = the month, agenda = everything). */
-function periodOf(view: string, cursor: Date): { start: Date; end: Date } {
+function periodOf(view: string, cursor: Date, weekStart: WeekStart): { start: Date; end: Date } {
   const start = startOfDay(cursor)
   if (view === 'week') {
-    const dow = start.getDay()
-    const mon = addDays(start, dow === 0 ? -6 : 1 - dow)
-    return { start: mon, end: addDays(mon, 7) }
+    const wk = weekStartOf(start, weekStart)
+    return { start: wk, end: addDays(wk, 7) }
   }
   if (view === 'month') {
     return {
@@ -44,7 +46,7 @@ export default function StatusFilter() {
       }
       return c
     }
-    const { start, end } = periodOf(ui.view, ui.cursor)
+    const { start, end } = periodOf(ui.view, ui.cursor, ui.weekStart === 'sunday' ? 0 : 1)
     for (const o of computeOccurrences(events, start, end)) {
       const st = o.event.status as EventStatus
       if (st in c) c[st]++

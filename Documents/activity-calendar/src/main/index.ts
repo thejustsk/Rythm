@@ -8,6 +8,7 @@ import { registerLabelHandlers } from './ipc/labels'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerGamifyHandlers } from './ipc/gamify'
 import { registerWindowHandlers } from './ipc/window'
+import { registerNotificationHandlers, startNotifier } from './notify'
 
 const isDev = !app.isPackaged
 
@@ -86,6 +87,28 @@ function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
               .catch(() => {})
           }, t)
         }
+      }
+      if (process.env.AC_EDGE) {
+        // debug: dispatch a hard wheel at the top of the day/week grid and log
+        // the title before/after (edge-nav verification)
+        setTimeout(() => {
+          win.webContents
+            .executeJavaScript(`(async () => {
+              const body = document.querySelector('.week-body')
+              const title = () => document.querySelector('.tb-title')?.textContent ?? ''
+              const before = title()
+              let fired = false
+              if (body) {
+                body.addEventListener('wheel', () => { fired = true }, { once: true })
+                body.scrollTop = 0
+                body.dispatchEvent(new WheelEvent('wheel', { deltaY: -220, bubbles: true, cancelable: true }))
+              }
+              await new Promise((r) => setTimeout(r, 1000))
+              return { before, after: title(), fired, hasBody: !!body, st: body ? body.scrollTop : -1, ch: body ? body.clientHeight : -1, sh: body ? body.scrollHeight : -1 }
+            })()`)
+            .then((v) => console.log('[edge-probe]', JSON.stringify(v)))
+            .catch((e) => console.log('[edge-probe] error', String(e).slice(0, 200)))
+        }, 2500)
       }
       setTimeout(async () => {
         try {
@@ -272,6 +295,8 @@ function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
+  // Windows: notifications need a stable AppUserModelID
+  if (process.platform === 'win32') app.setAppUserModelId('com.rhythm.calendar')
   console.log('[main] data dir:', getDataDir())
   const db = openDatabase()
   migrate(db)
@@ -282,12 +307,15 @@ app.whenReady().then(async () => {
   registerSettingsHandlers(db)
   registerGamifyHandlers(db)
   registerWindowHandlers()
+  registerNotificationHandlers(db)
 
   createWindow(db)
 
   // M8: automatic daily backup (once per 24h, when enabled)
   const { runAutoBackup } = await import('./backup')
   void runAutoBackup(db)
+  // B.2: OS notifications — morning summary (first time on each day) + slot reminders
+  startNotifier(db)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(db)

@@ -11,11 +11,16 @@ import ScorePrompt from '@/components/ScorePrompt'
 import SettingsDialog from '@/components/SettingsDialog'
 import CoinScoreFx from '@/components/CoinScoreFx'
 import CoinSystemDialog from '@/components/CoinSystemDialog'
+import ShortcutSheet from '@/components/ShortcutSheet'
 import { loadTheme } from '@/state/theme'
+import { loadPrefs } from '@/lib/prefs'
+import { installShortcuts } from '@/lib/shortcuts'
+import { weekStartOf } from '@/lib/dates'
 import { useCoins } from '@/state/coins'
 import { useToasts } from '@/state/toasts'
 import { useMilestones } from '@/state/milestones'
 import MonthView from '@/views/MonthView'
+import { addDays } from '@/engine/recurrence'
 import WeekView from '@/views/WeekView'
 import DayView from '@/views/DayView'
 import AgendaView from '@/views/AgendaView'
@@ -31,6 +36,7 @@ export default function App() {
 
   useEffect(() => {
     void loadTheme()
+    void loadPrefs()
     void load()
     void loadCoins()
     void loadMilestones()
@@ -86,17 +92,14 @@ export default function App() {
     })
   }, [load, loadCoins])
 
+  // global keyboard shortcuts + cheat sheet (?)
+  useEffect(() => installShortcuts(), [])
+
   const weekDays = (() => {
     const cursor = ui.cursor
-    const dow = cursor.getDay()
-    const monday = new Date(cursor)
-    monday.setDate(cursor.getDate() - (dow === 0 ? 6 : dow - 1))
+    const start = weekStartOf(cursor, ui.weekStart === 'sunday' ? 0 : 1)
     const days: Date[] = []
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(monday)
-      d.setDate(monday.getDate() + i)
-      days.push(d)
-    }
+    for (let i = 0; i < 7; i++) days.push(addDays(start, i))
     return days
   })()
 
@@ -132,6 +135,7 @@ export default function App() {
       {ui.editorKey && <EventDialog />}
       {ui.settingsOpen && <SettingsDialog />}
       {ui.coinSystemConfirm && <CoinSystemDialog />}
+      {ui.shortcutsOpen && <ShortcutSheet />}
       <ScorePrompt />
       <CoinScoreFx />
       <ToastHost />
