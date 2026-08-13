@@ -1,0 +1,185 @@
+/**
+ * Gamification bonus core — pure, unit-tested. No DB, no Electron.
+ * M10.2: daily check-in, "all planned done", perfect week.
+ */
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+export const isoD = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+export const addDaysIso = (iso: string, n: number) => {
+  const d = new Date(iso + 'T00:00:00')
+  d.setDate(d.getDate() + n)
+  return isoD(d)
+}
+
+export const CHECKIN_BASE = 10
+export const ALL_DONE_BONUS = 25
+export const PERFECT_WEEK_BONUS = 100
+export const PERFECT_MONTH_BONUS = 300
+export const CHECKIN_STREAK_MULTIPLIER_DAY = 7 // every 7-day streak → ×2
+
+export interface CheckInResult {
+  award: boolean
+  streak: number
+  amount: number
+  multiplier: number
+}
+
+/**
+ * Daily check-in state machine.
+ * - same day → no award
+ * - yesterday → streak continues (+1)
+ * - any gap → streak resets to 1
+ * - every 7th consecutive day → ×2
+ */
+export function checkInState(
+  lastCheckIn: string | null,
+  checkInStreak: number,
+  today: string
+): CheckInResult {
+  if (lastCheckIn === today) return { award: false, streak: checkInStreak, amount: 0, multiplier: 1 }
+  const streak = lastCheckIn === addDaysIso(today, -1) ? checkInStreak + 1 : 1
+  const multiplier = streak % CHECKIN_STREAK_MULTIPLIER_DAY === 0 ? 2 : 1
+  return { award: true, streak, amount: CHECKIN_BASE * multiplier, multiplier }
+}
+
+/** "All planned done (or cancelled)" for a day: every planned block resolved. */
+export function allDoneCheck(planned: number, resolved: number): boolean {
+  return planned > 0 && resolved === planned
+}
+
+export interface PerfectDay {
+  planned: number // how many planned blocks that day
+  done: number // how many of those are 'done'
+}
+
+/** A day counts toward a perfect week when it has NO plans (rest day) or at
+ *  least ONE event is 'done' (the same logic as the streak — one done is
+ *  enough; leftover todo/doing blocks on that day don't disqualify it). */
+export function dayResolved(d: PerfectDay): boolean {
+  return d.planned === 0 || d.done > 0
+}
+
+/**
+ * PERFECT WEEK (new logic, cup 5): a Monday–Sunday series where every day with
+ * at least one event is fully 'done' (rest days are fine) AND at least one day
+ * has events — a week with no plans at all is NOT a perfect week.
+ */
+export function perfectWeekCheck(days: PerfectDay[]): boolean {
+  if (days.length !== 7) return false
+  const totalPlanned = days.reduce((s, d) => s + d.planned, 0)
+  if (totalPlanned === 0) return false // no-plan week → not perfect
+  return days.every(dayResolved)
+}
+
+/** ISO monday of a week (used as the once-per-week award key). */
+export function weekKey(anyDayInWeek: string): string {
+  const d = new Date(anyDayInWeek + 'T00:00:00')
+  const dow = d.getDay()
+  const mon = new Date(d)
+  mon.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1))
+  return isoD(mon)
+}
+
+/** First day of the month containing the given ISO date (award key). */
+export function monthKey(anyDayInMonth: string): string {
+  return anyDayInMonth.slice(0, 8) + '01'
+}
+
+/**
+ * PERFECT MONTH (new logic): every day of the month belongs to a perfect week,
+ * i.e. EVERY Monday–Sunday week that overlaps the month is a perfect week
+ * (boundary weeks judged as whole weeks), and the month has at least one
+ * planned day.
+ */
+export function perfectMonthCheck(
+  monthStart: string, // YYYY-MM-DD (first of month)
+  monthEnd: string, // YYYY-MM-DD (last of month)
+  weekDays: (monIso: string) => PerfectDay[] // returns the 7 days of a week
+): boolean {
+  const mon0 = weekKey(monthStart)
+  const mon1 = weekKey(monthEnd)
+  let anyPlannedInMonth = false
+  for (let mon = mon0; ; mon = addDaysIso(mon, 7)) {
+    const days = weekDays(mon)
+    if (!perfectWeekCheck(days)) return false
+    // count planned days that lie inside the month
+    for (let i = 0; i < 7; i++) {
+      const d = addDaysIso(mon, i)
+      if (d >= monthStart && d <= monthEnd && days[i].planned > 0) anyPlannedInMonth = true
+    }
+    if (mon === mon1) break
+  }
+  return anyPlannedInMonth
+}
+
+/** The growing milestone path: 100, 250, 500, 1000, 1500, 2500, 4000, then +2000 forever. */
+export function defaultMilestoneCosts(count: number): number[] {
+  const base = [100, 250, 500, 1000, 1500, 2500, 4000]
+  const out: number[] = []
+  let prev = 4000
+  for (let i = 0; i < count; i++) {
+    if (i < base.length) out.push(base[i])
+    else {
+      prev += 2000
+      out.push(prev)
+    }
+  }
+  return out
+}
+
+/** STREAK-MILESTONE catch-up: every milestone cost <= streak (5, 10, 20, …),
+ *  so a jump that skips a lower milestone still pays it out. */
+export function streakMilestoneLevelsUpTo(streak: number): number[] {
+  const costs = defaultStreakCosts(80)
+  return costs.filter((c) => c <= streak)
+}
+
+/** Streak-milestone path: 5, 10, 20, 30, 50, 75, then +25 forever. */
+export function defaultStreakCosts(count: number): number[] {
+  const base = [5, 10, 20, 30, 50, 75]
+  const out: number[] = []
+  let prev = 75
+  for (let i = 0; i < count; i++) {
+    if (i < base.length) out.push(base[i])
+    else {
+      prev += 25
+      out.push(prev)
+    }
+  }
+  return out
+}
+
+/** Highest streak milestone reached by `streak` (or null below the first, 5). */
+export function streakMilestoneLevel(streak: number): number | null {
+  if (streak < 5) return null
+  const costs = defaultStreakCosts(80)
+  let hit: number | null = null
+  for (const c of costs) {
+    if (c <= streak) hit = c
+    else break
+  }
+  return hit
+}
+
+/**
+ * The 4-stone window for the streak goal box: the recently-hit stone is the
+ * SECOND stone (the FIRST stone for the very first milestone); for a streak
+ * below the first milestone the window starts at the first stone.
+ * Returns { stones, hitIndex, nextIndex }.
+ */
+export function streakWindow(streak: number): { stones: number[]; hitIndex: number; nextIndex: number } {
+  const costs = defaultStreakCosts(80)
+  let idx = -1
+  for (let i = 0; i < costs.length; i++) {
+    if (costs[i] <= streak) idx = i
+    else break
+  }
+  if (idx < 0) return { stones: costs.slice(0, 4), hitIndex: -1, nextIndex: 0 }
+  const start = idx === 0 ? 0 : idx - 1
+  return { stones: costs.slice(start, start + 4), hitIndex: idx - start, nextIndex: idx - start + 1 }
+}
+
+/** Streak-milestone reward: milestone value × 2. */
+export function streakMilestoneReward(level: number): number {
+  return level * 2
+}

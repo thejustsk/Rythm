@@ -1,0 +1,763 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCoins } from '@/state/coins'
+import { useMilestones } from '@/state/milestones'
+import { useToasts } from '@/state/toasts'
+import { fmtCoins, streakMilestoneReward, streakWindow } from '@/lib/gamification'
+import { computeOccurrences, parseLocal } from '@/engine/occurrences'
+import { addDays, startOfDay, isoDate } from '@/engine/recurrence'
+import { perfectWeekCheck, perfectMonthCheck } from '../../../main/gamifyCore'
+import { useData } from '@/state/store'
+import type { RewardMilestone } from '@shared/types'
+import Coin from '@/components/Coin'
+import CoinIntro from '@/components/CoinIntro'
+
+const DAY_LABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+/** The cinematic intro plays only on the FIRST Coins open per app session. */
+
+/** Mini-month style streak calendar: day numbers inside status-dot colors. */
+function StreakMonth({
+  month,
+  onMonth,
+  dayMap,
+  perfectWeeks,
+  perfectMonth
+}: {
+  month: Date
+  onMonth: (m: Date) => void
+  dayMap: Map<string, 'done' | 'missed' | 'none'>
+  /** Mon-Iso dates of PERFECT weeks (rows get a golden border). */
+  perfectWeeks: Set<string>
+  /** 'YYYY-MM' when the displayed month is a PERFECT month (golden dots,
+   *  blue text on done days; no-event days keep their normal styling). */
+  perfectMonth: string | null
+}) {
+  const today = startOfDay(new Date())
+  const first = new Date(month.getFullYear(), month.getMonth(), 1)
+  const gridStart = addDays(first, 1 - (first.getDay() === 0 ? 7 : first.getDay()))
+  // dynamic rows: only the weeks actually needed to cover the month
+  const monOffset = first.getDay() === 0 ? 6 : first.getDay() - 1 // Mon=0
+  const daysInThisMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()
+  const rowsNeeded = Math.ceil((monOffset + daysInThisMonth) / 7)
+  const rows: Date[][] = []
+  for (let r = 0; r < rowsNeeded; r++) {
+    const row: Date[] = []
+    for (let c = 0; c < 7; c++) row.push(addDays(gridStart, r * 7 + c))
+    rows.push(row)
+  }
+  const monthKeyStr = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}`
+  const isPerfectMonth = perfectMonth === monthKeyStr
+  return (
+    <div className="streak-month">
+      <div className="streak-month-head">
+        <button className="mm-nav" onClick={() => onMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>‹</button>
+        <span className="streak-month-title">{month.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
+        <button className="mm-nav" onClick={() => onMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>›</button>
+      </div>
+      <div className="streak-month-week">
+        {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => <span key={i}>{d}</span>)}
+      </div>
+      <div className="streak-month-grid">
+        {rows.map((row, r) => {
+          const weekMon = isoDate(row[0])
+          const wkPerfect = perfectWeeks.has(weekMon)
+          return (
+            <div key={r} className={`streak-row${wkPerfect ? ' perfect-wk' : ''}`} title={wkPerfect ? 'Perfect week 🏆' : undefined}>
+              {row.map((d, i) => {
+                const iso = isoDate(d)
+                const status = dayMap.get(iso) ?? 'none'
+                const isToday = iso === isoDate(today)
+                const other = d.getMonth() !== month.getMonth()
+                const future = d.getTime() > today.getTime()
+                // perfect month: done dates get a GOLDEN dot with blue text;
+                // no-event days keep their normal styling
+                const perfectM = isPerfectMonth && status === 'done' ? ' perfect-m' : ''
+                return (
+                  <span
+                    key={i}
+                    className={`streak-day ${status}${perfectM}${isToday ? ' today' : ''}${other ? ' other' : ''}${future ? ' future' : ''}`}
+                    title={`${iso}${status === 'done' ? ' — done ✓' : status === 'missed' ? ' — missed ✗' : ' — no events'}${wkPerfect ? ' (perfect week)' : ''}`}
+                  >
+                    {d.getDate()}
+                  </span>
+                )
+              })}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/** The 4-stone streak goal window with progress toward the next stone. */
+function StreakGoalWindow({ streak }: { streak: number }) {
+  const w = streakWindow(streak)
+  const hit = w.hitIndex >= 0 ? w.stones[w.hitIndex] : null
+  const next = w.stones[w.nextIndex] ?? w.stones[w.stones.length - 1]
+  const progress = hit === null ? Math.min(1, streak / next) : Math.min(1, (streak - hit) / (next - hit))
+  return (
+    <div className="streak-goal">
+      <div className="streak-goal-sub">Current: <b>{streak}d</b> · next reward at {next}d = {streakMilestoneReward(next)} 🪙</div>
+      <div className="streak-goal-stones">
+        {w.stones.map((c, i) => {
+          const isHit = i === w.hitIndex
+          const isPrev = i === w.hitIndex - 1 // the second-last reached mile
+          const isNext = i === w.nextIndex
+          return (
+            <div key={c} className={`streak-stone${isHit ? ' hit' : ''}${isPrev ? ' hit-prev' : ''}${isNext ? ' next' : ''}`}>
+              <div className="streak-stone-num">{c}d</div>
+              {isNext && (
+                <div className="streak-stone-bar">
+                  <div className="streak-stone-fill" style={{ width: `${progress * 100}%` }} />
+                </div>
+              )}
+              {isHit && <div className="streak-stone-tick">✓</div>}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/** Celebration overlay: confetti + coin burst when a milestone is claimed. */
+export function Celebration({ m, onClose }: { m: RewardMilestone; onClose: () => void }) {
+  const pieces = Array.from({ length: 42 }, (_, i) => ({
+    left: (i * 137) % 100,
+    delay: (i % 12) * 0.12,
+    color: ['#FFD60A', '#0A84FF', '#34C759', '#FF375F', '#BF5AF2', '#FF9F0A'][i % 6],
+    rotate: (i * 61) % 360
+  }))
+  return (
+    <div className="overlay celeb" onClick={onClose}>
+      <div className="confetti">
+        {pieces.map((p, i) => (
+          <span key={i} className="confetti-piece" style={{ left: `${p.left}%`, background: p.color, animationDelay: `${p.delay}s`, transform: `rotate(${p.rotate}deg)` }} />
+        ))}
+      </div>
+      <div className="celeb-card">
+        <div className="celeb-icon">🎉</div>
+        <div className="celeb-title">Milestone claimed!</div>
+        <div className="celeb-name">
+          {m.icon} {m.name}
+        </div>
+        <div className="celeb-sub">Treat yourself — you earned it. 🪙</div>
+        <button className="btn primary" onClick={onClose}>
+          Enjoy!
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** Prompt to set the reward for the next milestone (fires on first crossing). */
+/** Generic reward-item dialog (name/icon/notes only — cost/level are fixed). */
+/** Reward-note dialog — level name & icon are FIXED; only the reward note is editable. */
+function RewardDialog({
+  title,
+  initialNote,
+  onSave,
+  onClose
+}: {
+  title: string
+  initialNote: string
+  onSave: (note: string) => void
+  onClose: () => void
+}) {
+  const [note, setNote] = useState(initialNote === 'Set your reward' ? '' : initialNote)
+  return (
+    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="dialog">
+        <div className="dialog-title">{title}</div>
+        <div className="repeat-note muted">The level and coin cost are fixed — only the reward note is yours to set.</div>
+        <div className="mile-form">
+          <input
+            autoFocus
+            placeholder="Reward (e.g. Movie night)"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            className="mile-notes"
+          />
+        </div>
+        <div className="dialog-actions">
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" disabled={!note.trim()} onClick={() => onSave(note.trim())}>
+            Save reward
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Reward-time popup — asks for the reward of EVERY pending reached stone in
+ *  ONE dialog (1 or more): the first milestone included, and no conflict when
+ *  several milestones are achieved at once. */
+function RewardBatchPrompt({
+  stones,
+  onSave,
+  onSkip
+}: {
+  stones: RewardMilestone[]
+  onSave: (notes: Record<string, string>) => void
+  onSkip: () => void
+}) {
+  const [notes, setNotes] = useState<Record<string, string>>(() => {
+    const o: Record<string, string> = {}
+    for (const s of stones) o[s.id] = s.notes && s.notes !== 'Set your reward' ? s.notes : ''
+    return o
+  })
+  const anyNote = stones.some((s) => (notes[s.id] ?? '').trim())
+  return (
+    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onSkip()}>
+      <div className="dialog reward-batch">
+        <div className="dialog-title">🎯 Reward time!</div>
+        <div className="repeat-note muted">
+          {stones.length === 1
+            ? `Set the reward you'll claim for ${stones[0].name}.`
+            : 'Set a reward for each level — the last one is the next level coming up.'}
+        </div>
+        <div className="rb-list">
+          {stones.map((s) => (
+            <div key={s.id} className="rb-item">
+              <div className="rb-name">
+                {s.name} · <span className="mile-level">{s.cost} 🪙</span>
+              </div>
+              <input
+                autoFocus={stones.length === 1}
+                className="rb-input mile-notes"
+                placeholder="Reward (e.g. Movie night)"
+                value={notes[s.id] ?? ''}
+                onChange={(e) => setNotes({ ...notes, [s.id]: e.target.value })}
+              />
+            </div>
+          ))}
+        </div>
+        <div className="dialog-actions">
+          <button className="btn" onClick={onSkip}>
+            Skip
+          </button>
+          <button className="btn primary" disabled={!anyNote} onClick={() => onSave(notes)}>
+            Save rewards
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function CoinsView() {
+  const coins = useCoins()
+  const ms = useMilestones()
+  const systemOn = useCoins((s) => s.systemOn)
+  const loadMs = useMilestones((s) => s.load)
+  const { events } = useData()
+  const toasts = useToasts.getState()
+
+  const [faces, setFaces] = useState<number[]>([0, 0, 0, 0])
+  const [intro, setIntro] = useState(true)
+  const [introSkipped, setIntroSkipped] = useState(false)
+  const [streakMonth, setStreakMonth] = useState(() => {
+    const d = new Date()
+    return new Date(d.getFullYear(), d.getMonth(), 1)
+  })
+  const [celebrate, setCelebrate] = useState<RewardMilestone | null>(null)
+  const [rewardBatch, setRewardBatch] = useState<RewardMilestone[] | null>(null)
+  const [editStone, setEditStone] = useState<RewardMilestone | null>(null)
+  const [pathKey, setPathKey] = useState(0)
+  const [chartCol, setChartCol] = useState<string | undefined>(undefined)
+  const kpiBandRef = useRef<HTMLDivElement>(null)
+
+  // ---- intro: cinematic coin-drop plays IMMEDIATELY on every Coins visit.
+  // Clicking it skips it instantly (KPI cards appear right away — they never
+  // wait for the intro's natural end). ----
+  useEffect(() => {
+    void coins.refreshStats()
+    void coins.refresh()
+    void loadMs()
+    void useData.getState().load() // pick up any direct-DB changes (streak calendar etc.)
+    setIntro(true)
+    setIntroSkipped(false)
+    // streak bonuses (catch-up): check whenever the Coins tab opens, so
+    // perfect-week/month + streak-milestone coins land while the user watches
+    void window.api.coins.perfectMonth().then((r) => {
+      if (r.award) {
+        toasts.push({ message: `🗓️ Perfect month — +${r.amount} 🪙`, kind: 'info', duration: 5000 })
+        void coins.refresh()
+      }
+    })
+    void window.api.coins.perfectWeek().then((r) => {
+      if (r.award) {
+        toasts.push({ message: `🏆 Perfect week — +${r.amount} 🪙`, kind: 'info', duration: 4500 })
+        void coins.refresh()
+      }
+    })
+    void window.api.coins.streakMilestone().then((r) => {
+      if (r.award) {
+        toasts.push({ message: `🎯 ${r.level}-day streak milestone — +${r.amount} 🪙`, kind: 'info', duration: 4500 })
+        void coins.refresh()
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ---- "Last 7 days" box width == KPI card width, EXACTLY (any machine) ----
+  // Left panel now pins 3 KPI cards; the chart column matches one card exactly.
+  useEffect(() => {
+    const band = kpiBandRef.current
+    if (!band) return
+    const measure = () => {
+      const w = band.getBoundingClientRect().width
+      if (w <= 0) return
+      const card = (w - 2 * 10) / 3 // 3 cards, 10px gaps — mirrors the CSS
+      setChartCol(`${Math.round(card * 100) / 100}px`)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(band)
+    return () => ro.disconnect()
+  }, [])
+
+  // ---- dice: left → right cascade every 5s ----
+  const statsKey = `${coins.balance}|${coins.stats?.today ?? 0}|${coins.stats?.series.length ?? 0}|${coins.txs.length}`
+  useEffect(() => {
+    if (intro) return
+    const roll = () => {
+      for (let k = 0; k < 4; k++) {
+        window.setTimeout(() => {
+          setFaces((f) => ({ ...f, [k]: ((f[k] ?? 0) + 1) % 2 }))
+        }, k * 150)
+      }
+    }
+    const first = window.setTimeout(roll, 1500)
+    const id = window.setInterval(roll, 5000)
+    return () => {
+      window.clearTimeout(first)
+      window.clearInterval(id)
+    }
+  }, [statsKey, intro])
+
+  // ---- derived stats ----
+  const totals = useMemo(() => {
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const localOf = (iso: string) => {
+      const d = new Date(iso)
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    }
+    const today = localOf(new Date().toISOString())
+    let earned = 0
+    let redeemed = 0
+    let todayEarn = 0
+    let todaySpend = 0
+    for (const t of coins.txs) {
+      const isToday = localOf(t.ts) === today
+      if (t.type === 'earn' || t.type === 'bonus') {
+        earned += t.amount
+        if (isToday) todayEarn += t.amount
+      } else if (t.type === 'refund') {
+        // refunds reduce both total and today's earning
+        earned -= t.amount
+        if (isToday) todayEarn -= t.amount
+      } else if (t.type === 'spend') {
+        redeemed += t.amount
+        if (isToday) todaySpend += t.amount
+      }
+    }
+    return { earned, redeemed, todayEarn, todaySpend }
+  }, [coins.txs])
+
+  // Balance recomputed from the visible ledger — the milestone path can never
+  // disagree with the KPI cards, even if a refresh race left the chip stale.
+  const derivedBalance = useMemo(
+    () => coins.txs.reduce((s, t) => s + (t.type === 'spend' || t.type === 'refund' ? -t.amount : t.amount), 0),
+    [coins.txs]
+  )
+
+  const bestStreak = useCoins((s) => s.bestStreak) as unknown as number
+
+  // ---- streak calendar: last 12 weeks ----
+  const cal = useMemo(() => {
+    const today = startOfDay(new Date())
+    // FULL-HISTORY window: from the Monday of the EARLIEST event (clamped to
+    // the last 400 days) to today+1 — so the streak calendar styles every
+    // navigable month, not just the last ~12 weeks.
+    let rawStart = addDays(today, -1999)
+    for (const e of events) {
+      const t = parseLocal(e.startLocal)
+      if (t.getTime() < rawStart.getTime()) rawStart = startOfDay(t)
+    }
+    const rawDow = rawStart.getDay()
+    const gridStart = addDays(rawStart, rawDow === 0 ? -6 : 1 - rawDow) // Monday
+    const raw = new Map<string, { planned: number; done: number }>()
+    const occs = computeOccurrences(events, gridStart, addDays(today, 1))
+    for (const o of occs) {
+      const d = isoDate(o.start)
+      const cur = raw.get(d) ?? { planned: 0, done: 0 }
+      cur.planned++
+      if (o.event.status === 'done') cur.done++
+      raw.set(d, cur)
+    }
+    const dayMap = new Map<string, 'done' | 'missed' | 'none'>()
+    for (const [iso, info] of raw) dayMap.set(iso, info.done > 0 ? 'done' : info.planned > 0 ? 'missed' : 'none')
+    const cells: Array<{ date: string; planned: number; done: number; future: boolean }> = []
+    for (let d = gridStart; d.getTime() <= today.getTime(); d = addDays(d, 1)) {
+      const iso = isoDate(d)
+      const info = raw.get(iso)
+      cells.push({ date: iso, planned: info?.planned ?? 0, done: info?.done ?? 0, future: false })
+    }
+    // current streak (done days count, no-event days skip, missed breaks;
+    // TODAY with pending plans is a grace day and never breaks the streak)
+    let streak = 0
+    for (let i = 0; i < 2000; i++) {
+      const d = isoDate(addDays(today, -i))
+      const info = raw.get(d)
+      if (info && info.done > 0) {
+        streak++
+        continue
+      }
+      if (info && info.planned > 0 && i > 0) break
+    }
+    // PERFECT WEEKS (cup 5): every Mon–Sun row in the window
+    const perfectWeeks = new Set<string>()
+    for (let mon = gridStart; mon.getTime() <= today.getTime(); mon = addDays(mon, 7)) {
+      const days = [0, 1, 2, 3, 4, 5, 6].map((i) => {
+        const iso = isoDate(addDays(mon, i))
+        const info = raw.get(iso)
+        return { planned: info?.planned ?? 0, done: info?.done ?? 0 }
+      })
+      if (perfectWeekCheck(days)) perfectWeeks.add(isoDate(mon))
+    }
+    // PERFECT MONTHS (cup 5): every month in the window
+    const perfectMonths = new Set<string>()
+    const m0 = new Date(gridStart.getFullYear(), gridStart.getMonth(), 1)
+    for (let m = m0; m.getTime() <= today.getTime(); m = new Date(m.getFullYear(), m.getMonth() + 1, 1)) {
+      const start = isoDate(m)
+      const end = isoDate(new Date(m.getFullYear(), m.getMonth() + 1, 0))
+      const weekDaysFor = (monIso: string) =>
+        [0, 1, 2, 3, 4, 5, 6].map((i) => {
+          const iso = isoDate(addDays(new Date(monIso + 'T00:00:00'), i))
+          const info = raw.get(iso)
+          return { planned: info?.planned ?? 0, done: info?.done ?? 0 }
+        })
+      if (perfectMonthCheck(start, end, weekDaysFor)) perfectMonths.add(start.slice(0, 7))
+    }
+    return { cells, streak, dayMap, perfectWeeks, perfectMonths }
+  }, [events])
+
+  // ---- best streak: current > stored → persist (fixes "best shows 0d") ----
+  useEffect(() => {
+    void useCoins.getState().updateBestStreak(cal.streak)
+  }, [cal.streak])
+
+  // ---- reward-time popup: set rewards BEFORE a level is reached.
+  // Rule: ask for every level in the VISIBLE path (reached levels that still
+  // have no reward text + the ONE upcoming level) — so Level 1's reward is
+  // asked on the very first open (before hitting it), Level 2's when Level 1
+  // is hit, and if 2-3 levels get hit at once, the hit ones without rewards
+  // and the upcoming one are all asked together in ONE popup.
+  // A level is "answered" only when the user saved or skipped under this flow
+  // (rewardAsked.<cost>); old-build keys never suppress the ask. ----
+  useEffect(() => {
+    if (!ms.loaded || intro) return
+    if (rewardBatch) return
+    if (!systemOn) return // cup 3: no reward prompts while the system is OFF
+    void (async () => {
+      const reachedCount = ms.list.reduce((acc, m) => (m.reached ? acc + 1 : acc), 0)
+      const visibleCount = Math.max(1, reachedCount + 1) // reached + the next upcoming one
+      const pending: RewardMilestone[] = []
+      for (let i = 0; i < visibleCount; i++) {
+        const m = ms.list[i]
+        if (!m) continue
+        const asked = await window.api.settings.get('rewardAsked.' + m.cost)
+        if (asked) continue
+        const rewardMissing = !m.notes || m.notes === 'Set your reward'
+        if (rewardMissing) pending.push(m)
+      }
+      if (pending.length) setRewardBatch(pending)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ms.list, ms.loaded, intro, derivedBalance])
+
+  const saveRewards = async (notes: Record<string, string>) => {
+    if (!rewardBatch) return
+    for (const s of rewardBatch) {
+      const n = (notes[s.id] ?? '').trim()
+      if (n) await ms.update(s.id, { notes: n })
+      await window.api.settings.set('stoneCrossed.' + s.cost, '1')
+      await window.api.settings.set('rewardAsked.' + s.cost, '1')
+    }
+    toasts.push({
+      message: rewardBatch.length === 1 ? 'Reward saved — enjoy it when you redeem! 🎁' : `${rewardBatch.length} rewards saved — enjoy them! 🎁`,
+      kind: 'info',
+      duration: 3500
+    })
+    setRewardBatch(null)
+    // force a clean second layout pass 2-3ms after editing (fixes first-time
+    // overlap; same as returning to the tab a second time, but instant)
+    window.setTimeout(() => setPathKey((k) => k + 1), 3)
+  }
+
+  const skipRewards = async () => {
+    if (!rewardBatch) return
+    for (const s of rewardBatch) {
+      await window.api.settings.set('stoneCrossed.' + s.cost, '1')
+      await window.api.settings.set('rewardAsked.' + s.cost, '1')
+    }
+    setRewardBatch(null)
+    window.setTimeout(() => setPathKey((k) => k + 1), 3)
+  }
+
+  const claim = async (m: RewardMilestone) => {
+    const res = await ms.claim(m.id)
+    await coins.refresh()
+    if (res.ok) {
+      setCelebrate(m)
+      toasts.push({ message: `Claimed "${m.name}" — ${fmtCoins(m.cost)} 🪙 spent. Enjoy!`, kind: 'info', duration: 4000 })
+    } else {
+      toasts.push({ message: `Not enough coins yet (need ${fmtCoins(m.cost)})`, kind: 'danger', duration: 3500 })
+    }
+  }
+
+  const redeemCount = (name: string) => coins.txs.filter((t) => t.type === 'spend' && t.reason.includes('Milestone: ' + name)).length
+
+  // ---- KPI dice faces ----
+  const kpiFaces: Array<Array<{ label: string; value: string; icon: string; cls: string }>> = [
+    [
+      { label: 'Total Rhythm Coins', value: fmtCoins(coins.balance), icon: 'front', cls: 'blue' },
+      { label: "Today's net", value: fmtCoins(coins.stats?.today ?? 0), icon: 'today', cls: 'blue' }
+    ],
+    [
+      { label: 'Total earned', value: fmtCoins(totals.earned), icon: 'up', cls: 'green' },
+      { label: "Today's earning", value: fmtCoins(totals.todayEarn), icon: 'today', cls: 'green' }
+    ],
+    [
+      { label: 'Total redeemed', value: fmtCoins(totals.redeemed), icon: 'down', cls: 'red' },
+      { label: "Today's redemption", value: fmtCoins(totals.todaySpend), icon: 'today', cls: 'red' }
+    ],
+    [
+      { label: 'Current streak', value: `${cal.streak}d`, icon: 'fire', cls: 'gold' },
+      { label: 'Best streak ever', value: `${bestStreak}d`, icon: 'trophy', cls: 'gold' }
+    ]
+  ]
+
+  return (
+    <div className={`coins-view${introSkipped ? ' intro-skipped' : ''}`}>
+      {!systemOn && (
+        <div className="coins-off-banner">
+          🪙 <b>Coins system is disabled.</b> Click the <b>Coins</b> pill in the header to turn it back on — your balance and progress are safe.
+        </div>
+      )}
+      {intro && (
+        <CoinIntro
+          onDone={(skipped) => {
+            setIntro(false)
+            if (skipped) setIntroSkipped(true)
+          }}
+        />
+      )}
+
+      <div className="coins-layout">
+        {/* ============ LEFT column: 3 KPI cards PINNED on top, panels scroll below ============ */}
+        <div className="coins-col">
+          <div className="coins-kpis left" ref={kpiBandRef}>
+            {kpiFaces.slice(0, 3).map((arr, ci) => {
+              const face = arr[faces[ci] ?? 0]
+              return (
+                <div key={ci} className={`coins-kpi ${face.cls}`} data-face={faces[ci] ?? 0}>
+                  <div key={`${statsKey}-${faces[ci]}`} className="kpi-face">
+                    <span className="kpi-coin">{face.icon === 'front' ? <Coin size={40} flip /> : face.icon === 'today' ? <Coin size={26} flip /> : <span className={`kpi-emoji${face.icon === 'today' ? ' sm' : ''}`}>{face.icon === 'up' ? '📈' : '📤'}</span>}</span>
+                    <div>
+                      <div className="coins-kpi-value">{face.value}</div>
+                      <div className="coins-kpi-label">{face.label}</div>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="coins-left">
+          <div className="coins-charts" style={chartCol ? { gridTemplateColumns: `${chartCol} 1fr` } : undefined}>
+            <div className="ins-panel">
+              <div className="ins-panel-title">Last 7 days</div>
+              <svg className="chart-svg chart-stretch" viewBox="0 0 260 130" width="100%" height="150">
+                {coins.stats?.series.map((d, i) => {
+                  const maxDay = Math.max(1, ...(coins.stats?.series.map((x) => Math.abs(x.amount)) ?? [0]))
+                  const hh = (Math.abs(d.amount) / maxDay) * 96
+                  const hot = d.date === (coins.stats?.series[coins.stats.series.length - 1]?.date ?? '')
+                  return (
+                    <g key={d.date}>
+                      <rect x={i * 36 + 8} y={104 - hh} width={20} height={hh} rx={3}
+                        fill={d.amount >= 0 ? (hot ? 'var(--amber)' : 'var(--green)') : 'var(--red)'} opacity={hot ? 1 : 0.75}>
+                        <title>{d.date}: {fmtCoins(d.amount)}</title>
+                      </rect>
+                      <text x={i * 36 + 18} y={118} fontSize={8.5} textAnchor="middle" fill="var(--text-3)">
+                        {DAY_LABEL[new Date(d.date + 'T00:00:00').getDay()]}
+                      </text>
+                    </g>
+                  )
+                })}
+              </svg>
+            </div>
+            <div className="ins-panel">
+              <div className="ins-panel-title">Earned by label</div>
+              {!coins.stats || coins.stats.perLabel.length === 0 ? (
+                <div className="ins-empty">No coins earned yet</div>
+              ) : (
+                coins.stats.perLabel.map((l) => (
+                  <div key={l.labelId ?? 'none'} className="ins-progress">
+                    <span className="ins-progress-name">{l.labelName}</span>
+                    <div className="ins-progress-track">
+                      <div className="ins-progress-done" style={{ width: `${(l.amount / Math.max(1, coins.stats!.perLabel[0].amount)) * 100}%`, background: 'var(--amber)' }} />
+                    </div>
+                    <span className="ins-progress-val">{fmtCoins(l.amount)} 🪙</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="ins-panel">
+            <div className="ins-panel-title">Ledger</div>
+            {coins.txs.length === 0 ? (
+              <div className="ins-empty">No transactions yet</div>
+            ) : (
+              <div className="ledger">
+                {coins.txs.slice(0, 20).map((t) => (
+                  <div key={t.id} className={`ledger-row ${t.type}`}>
+                    <span className="ledger-date">{t.ts.slice(0, 10)}</span>
+                    <span className="ledger-reason">{t.reason}</span>
+                    <span className="ledger-amount">{t.type === 'spend' || t.type === 'refund' ? '−' : '+'}{fmtCoins(t.amount)} 🪙</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          </div>
+          </div>
+
+        {/* ============ RIGHT column: streak KPI PINNED on top, panels scroll below ============ */}
+        <div className="coins-col">
+          <div className="coins-kpis right">
+            {(() => {
+              const arr = kpiFaces[3]
+              const face = arr[faces[3] ?? 0]
+              return (
+                <div className={`coins-kpi ${face.cls} streak-kpi`} data-face={faces[3] ?? 0}>
+                  <div key={`${statsKey}-${faces[3]}`} className="kpi-face">
+                    <span className="kpi-coin"><span className="kpi-emoji">{face.icon === 'fire' ? '🔥' : '🏆'}</span></span>
+                    <div>
+                      <div className="coins-kpi-value">{face.value}</div>
+                      <div className="coins-kpi-label">{face.label}</div>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
+          </div>
+
+          <div className="coins-right">
+          <div className="ins-panel">
+            <div className="ins-panel-title">Streak calendar</div>
+            <StreakMonth
+              month={streakMonth}
+              onMonth={(m) => setStreakMonth(m)}
+              dayMap={cal.dayMap}
+              perfectWeeks={cal.perfectWeeks}
+              perfectMonth={cal.perfectMonths.has(String(streakMonth.getFullYear()) + '-' + String(streakMonth.getMonth() + 1).padStart(2, '0')) ? String(streakMonth.getFullYear()) + '-' + String(streakMonth.getMonth() + 1).padStart(2, '0') : null}
+            />
+            <div className="streak-legend">
+              <span><i className="sl done" /> done</span>
+              <span><i className="sl none" /> no events (streak continues)</span>
+              <span><i className="sl missed" /> missed (streak ends)</span>
+              <span><i className="sl perfect-wk" /> perfect week</span>
+              <span><i className="sl perfect-m" /> perfect month</span>
+            </div>
+          </div>
+
+          <div className="ins-panel">
+            <div className="ins-panel-title">Streak goal</div>
+            <StreakGoalWindow streak={cal.streak} />
+          </div>
+
+          <div className="ins-panel">
+            <div className="ins-panel-title">Milestone path</div>
+            <div className="mile-path" key={pathKey}>
+              {(() => {
+                // STICKY REACH: a stone is REACHED once its cost was ever met
+                // (persisted by the main process as `reached`), so a box NEVER
+                // disappears when the net drops. Start = Level 1 only; each
+                // reached stone stacks the next; if multiple stones are hit,
+                // all of them stay present. Claiming is NOT required.
+                const reachedCount = ms.list.reduce((acc, m) => (m.reached ? acc + 1 : acc), 0)
+                const visible = ms.list.slice(0, Math.max(1, reachedCount + 1))
+                // Stack: descending — highest level on TOP, Level 1 at the BOTTOM.
+                const order = [...visible].reverse()
+                return order.map((m, i) => {
+                  // "crossed" = the net currently covers this stone (gold highlight + Claim afford)
+                  const crossed = derivedBalance >= m.cost
+                  const redeemed = redeemCount(m.name)
+                  const first = m.achievedAt
+                  const isNext = i === 0 && !m.reached
+                  return (
+                    <div key={m.id} className={`mile-stone${crossed ? ' crossed' : ''}${first ? ' first' : ''}${isNext ? ' next' : ''}`}>
+                      {i > 0 && <div className="mile-link" />}
+                      <div className="mile-stone-head">
+                        <span className="mile-stone-icon">🎯</span>
+                        <div className="mile-stone-info">
+                          <div className="mile-stone-name">
+                            {m.name}
+                            <span className="mile-level">{m.cost} 🪙</span>
+                          </div>
+                          {m.notes ? (
+                            <div className="mile-stone-notes">🎁 {m.notes}</div>
+                          ) : (
+                            <div className="mile-stone-notes hint">Set your reward</div>
+                          )}
+                          <div className="mile-stone-cost">
+                            {first && <span className="redeem-gold">redeemed {redeemed}×</span>}
+                          </div>
+                        </div>
+                        <div className="mile-stone-actions">
+                          {crossed && !first && (
+                            <button className="btn primary sm" onClick={() => void claim(m)}>Claim 🎉</button>
+                          )}
+                          {first && (
+                            <button className="btn sm" onClick={() => void claim(m)}>Redeem</button>
+                          )}
+                          <button className="btn sm mile-edit" title="Edit reward" onClick={() => setEditStone(m)}>
+                            ✎
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })
+              })()}            <div className="mile-sub">Reach a stone to unlock its reward — redeemable again and again. 🎁</div>
+          </div>
+        </div>
+      </div>
+
+      {celebrate && <Celebration m={celebrate} onClose={() => setCelebrate(null)} />}
+      {rewardBatch && <RewardBatchPrompt stones={rewardBatch} onSave={(n) => void saveRewards(n)} onSkip={() => void skipRewards()} />}
+      {editStone && (
+        <RewardDialog
+          title={`Edit reward — ${editStone.name}`}
+          initialNote={editStone.notes}
+          onSave={async (note) => {
+            await ms.update(editStone.id, { notes: note })
+            window.setTimeout(() => setPathKey((k) => k + 1), 3)
+            toasts.push({ message: 'Reward updated', kind: 'info', duration: 2500 })
+            setEditStone(null)
+          }}
+          onClose={() => setEditStone(null)}
+        />
+      )}
+      </div>
+      </div>
+    </div>
+  )
+}
