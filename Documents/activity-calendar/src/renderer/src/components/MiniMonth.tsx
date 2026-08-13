@@ -21,8 +21,11 @@ export default function MiniMonth({ cursor, onChange }: Props) {
   const first = new Date(cursor.getFullYear(), cursor.getMonth(), 1)
   const gridStart = addDays(first, 1 - (first.getDay() === 0 ? 7 : first.getDay())) // Monday-start
 
+  // dynamic rows: only the weeks needed to cover the month (4/5/6, not always 6)
+  const monOffset = first.getDay() === 0 ? 6 : first.getDay() - 1 // Mon=0
+  const rowsNeeded = Math.ceil((monOffset + daysInMonth(cursor.getFullYear(), cursor.getMonth())) / 7)
   const cells: Date[] = []
-  for (let i = 0; i < 42; i++) cells.push(addDays(gridStart, i))
+  for (let i = 0; i < rowsNeeded * 7; i++) cells.push(addDays(gridStart, i))
 
   const stepMonth = (delta: number) => {
     onChange(new Date(cursor.getFullYear(), cursor.getMonth() + delta, 1))

@@ -1929,7 +1929,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     const promptDuringIntro = await js(`!!document.querySelector('.coin-drop') && !document.querySelector('.reward-batch')`)
     check('reward prompt does NOT appear during the intro', promptDuringIntro)
     const introVer = await js(`document.querySelector('.intro-word-ver')?.textContent ?? ''`)
-    check('intro shows version tag (build identification)', introVer.includes('v1.9.0'), introVer)
+    check('intro shows version tag (build identification)', introVer.includes('v1.9.2'), introVer)
     const noSideVer = await js(`!document.querySelector('.sidebar-version')`)
     check('no version tag in the sidebar', noSideVer)
     const flipAnim = await js(`(() => {
@@ -2056,6 +2056,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     })()`)
     check('coins: sidebar collapsed + pills hidden (search+New live in the pills row, hidden with it)', cvChrome.sidebarCollapsed && cvChrome.pillsGone && !cvChrome.todayBtn, JSON.stringify(cvChrome))
     check('coins: golden heading shown', cvChrome.heading.includes('Coins'), cvChrome.heading)
+    // CUP-5: the settings icon IS present in the minimal (Insights/Coins) toolbar
+    const minSettings = await js(`!!document.querySelector('.toolbar.minimal .settings-btn')`)
+    check('cup5: settings icon present in the Coins tab toolbar', minSettings)
 
     // 2ba. 7-day chart stretches & centers with the box
     const cvChart = await js(`(() => {
@@ -2227,9 +2230,13 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       return null
     })()`)
     check('cup4: widget celebrates on net crossing (gold border + dust + "Level 1 passed — Claim in Coins")', !!celebShown && celebShown.text.includes('Level 1 passed') && celebShown.text.includes('Claim in Coins') && celebShown.dust >= 10, JSON.stringify(celebShown))
-    await sleep(5400)
+    // celebration now lasts 10s (doubled): still celebrating at ~6s
+    await sleep(6000)
+    const celebStill = await js(`(() => { const w = document.querySelector('.mile-widget'); return w ? w.classList.contains('celebrating') : false })()`)
+    check('cup5: celebration still active at 6s (10s duration)', celebStill)
+    await sleep(5000)
     const celebGone = await js(`(() => { const w = document.querySelector('.mile-widget'); return { celebrating: w ? w.classList.contains('celebrating') : false, text: w ? w.textContent : '' } })()`)
-    check('cup4: celebration clears after 5s → shows the NEXT level', !celebGone.celebrating && celebGone.text.includes('Level 2'), JSON.stringify(celebGone))
+    check('cup4: celebration clears after 10s → shows the NEXT level', !celebGone.celebrating && celebGone.text.includes('Level 2'), JSON.stringify(celebGone))
     await js(`window.api.coins.clearScores('ms-widget-1', '${TOMORROW}')`)
     await js(`window.__rhythmCoins.refresh()`)
     await sleep(300)
@@ -2972,14 +2979,23 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     void noPlanMon // deliberately no events
     const pwNoPlan = await js(`window.api.coins.perfectWeek()`)
     check('perfect week: a week with NO plans is NOT perfect', !pwNoPlan.award, JSON.stringify(pwNoPlan))
-    // a COMPLETED week with a leftover TODO day → NOT perfect
+    // a COMPLETED week with a day that has NO done event at all → NOT perfect
     const pendMon = addDaysIsoSmoke(lastMonIso, -21)
     for (let i = 0; i < 7; i++) {
-      if (i === 2) insEv('pw-pend-' + i, addDaysIsoSmoke(pendMon, i), 'todo')
+      if (i === 2) insEv('pw-pend-' + i, addDaysIsoSmoke(pendMon, i), 'todo') // no done that day
       else insEv('pw-pend-' + i, addDaysIsoSmoke(pendMon, i), 'done')
     }
     const pwPend = await js(`window.api.coins.perfectWeek()`)
-    check('perfect week: a pending day in a completed week → NO award', !pwPend.award, JSON.stringify(pwPend))
+    check('perfect week: a day with ZERO done in a completed week → NO award', !pwPend.award, JSON.stringify(pwPend))
+    dbRun("DELETE FROM events WHERE title = 'PW'")
+    // STREAK-LOGIC rule: a day with SOME done (1 of 2) + leftover todo STILL counts
+    const partialMon = addDaysIsoSmoke(lastMonIso, -28)
+    for (let i = 0; i < 7; i++) {
+      insEv('pw-part-' + i + '-a', addDaysIsoSmoke(partialMon, i), 'done')
+      if (i === 4) insEv('pw-part-' + i + '-b', addDaysIsoSmoke(partialMon, i), 'todo') // leftover same day
+    }
+    const pwPart = await js(`window.api.coins.perfectWeek()`)
+    check('perfect week: one done per day is enough (streak logic) → +100', pwPart.award && pwPart.amount === 100, JSON.stringify(pwPart))
     dbRun("DELETE FROM events WHERE title = 'PW'")
     // PERFECT MONTH (cup 5): every day of the previous month lies in a perfect
     // week → +300 (the month's weeks also pay +100 each, by design)
@@ -3016,6 +3032,15 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       return { total: rows.length, perfect: perf.length, title: perf[0]?.getAttribute('title') ?? '' }
     })()`)
     check('cup5: streak calendar wraps perfect week rows in a golden border', wkGold.perfect >= 1 && wkGold.title.includes('Perfect week'), JSON.stringify(wkGold))
+    // CUP-5: dynamic rows — the streak calendar shows ONLY the weeks the month
+    // needs (4/5/6), and the sidebar mini-month too
+    const dynRows = await js(`(() => {
+      const sc = document.querySelectorAll('.streak-month .streak-row').length
+      const mm = document.querySelectorAll('.minimonth .mm-cell').length
+      return { streakRows: sc, miniCells: mm }
+    })()`)
+    check('cup5: streak calendar rows are dynamic (4-6, not always 6)', dynRows.streakRows >= 4 && dynRows.streakRows <= 6, JSON.stringify(dynRows))
+    check('cup5: mini-month cells are dynamic (28-42, not always 42)', dynRows.miniCells >= 28 && dynRows.miniCells <= 42 && dynRows.miniCells % 7 === 0, JSON.stringify(dynRows))
     // navigate the mini-month one step back → the perfect month → golden dots
     await js(`document.querySelector('.streak-month .mm-nav')?.click()`)
     await sleep(600)

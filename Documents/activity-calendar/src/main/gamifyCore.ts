@@ -52,11 +52,11 @@ export interface PerfectDay {
   done: number // how many of those are 'done'
 }
 
-/** A day counts toward a perfect week when it has NO plans (rest day) or ALL
- *  of its events are 'done'. A day with leftover todo/doing blocks is NOT
- *  resolved (strict — no partial credit). */
+/** A day counts toward a perfect week when it has NO plans (rest day) or at
+ *  least ONE event is 'done' (the same logic as the streak — one done is
+ *  enough; leftover todo/doing blocks on that day don't disqualify it). */
 export function dayResolved(d: PerfectDay): boolean {
-  return d.planned === 0 || d.done === d.planned
+  return d.planned === 0 || d.done > 0
 }
 
 /**

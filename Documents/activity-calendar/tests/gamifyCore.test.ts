@@ -44,13 +44,17 @@ describe('allDoneCheck', () => {
   })
 })
 
-describe('perfectWeekCheck (cup 5: every planned day fully done, ≥1 planned day)', () => {
+describe('perfectWeekCheck (cup 5: every planned day has >=1 done, >=1 planned day)', () => {
   const full = (planned: number, done: number) => ({ planned, done })
   const goodWeek = [
-    full(2, 2), full(1, 1), full(3, 3), full(0, 0), full(1, 1), full(2, 2), full(4, 4)
+    full(2, 1), full(1, 1), full(3, 3), full(0, 0), full(1, 1), full(2, 2), full(4, 1)
   ]
-  it('a week with every planned day fully done is perfect', () => {
+  it('a week where every planned day has at least one done is perfect', () => {
     expect(perfectWeekCheck(goodWeek)).toBe(true)
+  })
+  it('a day with SOME done and leftover todos still counts (streak logic)', () => {
+    const days = [full(2, 1), full(1, 1), full(1, 1), full(0, 0), full(1, 1), full(1, 1), full(1, 1)]
+    expect(perfectWeekCheck(days)).toBe(true)
   })
   it('REST days (no plans) do NOT break the week', () => {
     const withRest = [full(3, 3), full(2, 2), full(0, 0), full(1, 1), full(4, 4), full(2, 2), full(2, 2)]
@@ -59,10 +63,6 @@ describe('perfectWeekCheck (cup 5: every planned day fully done, ≥1 planned da
   it('a NO-PLAN week is NOT perfect', () => {
     const idle = Array.from({ length: 7 }, () => full(0, 0))
     expect(perfectWeekCheck(idle)).toBe(false)
-  })
-  it('a day with leftover todo/doing blocks fails (strict — partial credit NOT allowed)', () => {
-    const days = [full(2, 1), full(1, 1), full(1, 1), full(0, 0), full(1, 1), full(1, 1), full(1, 1)]
-    expect(perfectWeekCheck(days)).toBe(false)
   })
   it('a day with plans but NOTHING done fails', () => {
     const days = [full(2, 0), full(1, 1), full(1, 1), full(0, 0), full(1, 1), full(1, 1), full(1, 1)]
@@ -151,10 +151,11 @@ describe('helpers', () => {
     expect(monthKey('2026-08-13')).toBe('2026-08-01')
     expect(monthKey('2026-12-31')).toBe('2026-12-01')
   })
-  it('dayResolved: rest days ok, all-done required otherwise', () => {
+  it('dayResolved: rest days ok, at least one done otherwise (streak logic)', () => {
     expect(dayResolved({ planned: 0, done: 0 })).toBe(true)
     expect(dayResolved({ planned: 3, done: 3 })).toBe(true)
-    expect(dayResolved({ planned: 3, done: 2 })).toBe(false)
+    expect(dayResolved({ planned: 3, done: 2 })).toBe(true) // some done → ok
+    expect(dayResolved({ planned: 3, done: 1 })).toBe(true) // one done → ok
     expect(dayResolved({ planned: 2, done: 0 })).toBe(false)
   })
   it('addDaysIso crosses month boundaries', () => {

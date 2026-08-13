@@ -1237,17 +1237,17 @@
   animation: fadeIn 0.25s ease;
 }
 .mile-widget.ready { background: linear-gradient(120deg, rgba(255, 214, 10, 0.14), rgba(255, 159, 10, 0.2)); }
-/* golden shining border while celebrating a milestone pass */
+/* celebrating widget: a soft pulsing amber border (subtle, app-minimal) */
 .mile-widget.celebrating {
   position: relative;
   overflow: hidden;
-  border: 2px solid transparent;
-  background: linear-gradient(120deg, rgba(255, 214, 10, 0.18), rgba(255, 159, 10, 0.26));
-  animation: mileGoldBorder 1.2s ease-in-out infinite;
+  border: 1.5px solid transparent;
+  background: linear-gradient(120deg, rgba(255, 159, 10, 0.1), rgba(255, 159, 10, 0.18));
+  animation: mileGoldBorder 1.4s ease-in-out infinite;
 }
 @keyframes mileGoldBorder {
-  0%, 100% { border-color: rgba(255, 200, 60, 0.55); box-shadow: 0 0 10px rgba(255, 190, 50, 0.35), inset 0 0 8px rgba(255, 190, 50, 0.2); }
-  50% { border-color: rgba(255, 220, 110, 0.95); box-shadow: 0 0 22px rgba(255, 190, 50, 0.7), inset 0 0 14px rgba(255, 190, 50, 0.4); }
+  0%, 100% { border-color: rgba(255, 159, 10, 0.45); box-shadow: 0 0 8px rgba(255, 159, 10, 0.18); }
+  50% { border-color: rgba(255, 159, 10, 0.75); box-shadow: 0 0 14px rgba(255, 159, 10, 0.32); }
 }
 .mile-celeb {
   position: relative;
@@ -1261,8 +1261,14 @@
   position: relative;
   z-index: 1;
   font-size: 11.5px;
-  font-weight: 800;
-  color: #b45309;
+  font-weight: 700;
+  /* app-style: amber text on a soft amber tint — matches the Coins accent
+     language (no gradients, no text shadows) */
+  color: var(--amber);
+  background: rgba(255, 159, 10, 0.12);
+  border: 1px solid rgba(255, 159, 10, 0.35);
+  padding: 4px 10px;
+  border-radius: 999px;
   text-align: center;
   animation: celebTextPop 0.4s cubic-bezier(0.2, 1.4, 0.4, 1) both;
 }
@@ -1270,17 +1276,27 @@
   0% { transform: scale(0.6); opacity: 0; }
   100% { transform: scale(1); opacity: 1; }
 }
+/* soft gold dust (subtle, app-minimal) */
 .mile-celeb-dust {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: radial-gradient(circle, #ffe066, #ff9f0a);
-  box-shadow: 0 0 6px rgba(255, 190, 60, 0.9);
+  background: var(--amber);
+  box-shadow: 0 0 5px rgba(255, 159, 10, 0.5);
   animation: mileDust 1.2s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
   opacity: 0;
+}
+.mile-celeb-dust:nth-child(3n) {
+  background: #ffd34d;
+  width: 4px;
+  height: 4px;
+}
+.mile-celeb-dust:nth-child(3n+1) {
+  background: var(--accent);
+  box-shadow: 0 0 5px rgba(10, 132, 255, 0.5);
 }
 @keyframes mileDust {
   0% { transform: translate(0, 0) scale(1); opacity: 1; }
@@ -1622,19 +1638,21 @@
 .streak-month-week span { text-align: center; font-size: 9px; font-weight: 700; color: var(--text-3); }
 .streak-month-grid { display: flex; flex-direction: column; gap: 2px; }
 .streak-row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; border-radius: 10px; padding: 1px; }
-/* perfect week: the whole Mon–Sun row gets a golden border */
+/* perfect week: thin subtle amber border + faint tint — matches the app's
+   minimal style (no heavy glow) */
 .streak-row.perfect-wk {
-  border: 2px solid rgba(255, 190, 50, 0.85);
-  box-shadow: 0 0 8px rgba(255, 190, 50, 0.4), inset 0 0 6px rgba(255, 190, 50, 0.18);
-  background: rgba(255, 190, 50, 0.06);
+  border: 1px solid rgba(255, 159, 10, 0.45);
+  background: rgba(255, 159, 10, 0.05);
+  border-radius: 10px;
 }
-/* perfect month: done dates become GOLDEN dots with BLUE text; no-event days
-   keep their normal styling */
+/* perfect month: done dates become a SOLID AMBER dot with white text — the
+   same pattern as the regular done dot (blue → white), just in the app's
+   amber; no gradients or shadows */
 .streak-day.done.perfect-m {
   background: var(--amber);
-  color: var(--accent);
-  box-shadow: 0 0 6px rgba(255, 190, 50, 0.55);
-  font-weight: 800;
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 0 6px rgba(255, 159, 10, 0.45);
 }
 .streak-day {
   aspect-ratio: 1;

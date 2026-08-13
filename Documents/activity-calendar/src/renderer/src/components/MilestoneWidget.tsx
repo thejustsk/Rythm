@@ -42,10 +42,10 @@ export default function MilestoneWidget() {
     prevRef.current = balance
   }, [balance, sorted])
 
-  // clear the celebration after 5s
+  // clear the celebration after 10s (doubled per feedback)
   useEffect(() => {
     if (!celeb) return
-    const t = window.setTimeout(() => setCeleb((c) => (c && c.key === celeb.key ? null : c)), 5000)
+    const t = window.setTimeout(() => setCeleb((c) => (c && c.key === celeb.key ? null : c)), 10000)
     return () => window.clearTimeout(t)
   }, [celeb])
 

@@ -35,8 +35,12 @@ function StreakMonth({
   const today = startOfDay(new Date())
   const first = new Date(month.getFullYear(), month.getMonth(), 1)
   const gridStart = addDays(first, 1 - (first.getDay() === 0 ? 7 : first.getDay()))
+  // dynamic rows: only the weeks actually needed to cover the month
+  const monOffset = first.getDay() === 0 ? 6 : first.getDay() - 1 // Mon=0
+  const daysInThisMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate()
+  const rowsNeeded = Math.ceil((monOffset + daysInThisMonth) / 7)
   const rows: Date[][] = []
-  for (let r = 0; r < 6; r++) {
+  for (let r = 0; r < rowsNeeded; r++) {
     const row: Date[] = []
     for (let c = 0; c < 7; c++) row.push(addDays(gridStart, r * 7 + c))
     rows.push(row)
