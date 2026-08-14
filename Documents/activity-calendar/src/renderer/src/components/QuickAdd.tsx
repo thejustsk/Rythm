@@ -23,6 +23,7 @@ export default function QuickAdd() {
   })
   const [labelId, setLabelId] = useState<string | null>(null)
   const [status, setStatus] = useState<EventStatus>('todo')
+  const [description, setDescription] = useState('')
   const [rrule, setRrule] = useState<string | null>(null)
 
   const rangeValid = parseLocal(end).getTime() > parseLocal(start).getTime()
@@ -31,7 +32,7 @@ export default function QuickAdd() {
     if (!title.trim() || !rangeValid) return
     await createEvent({
       title: title.trim(),
-      description: '',
+      description: description.trim(),
       startLocal: start,
       endLocal: end,
       labelId,
@@ -57,6 +58,8 @@ export default function QuickAdd() {
           setLabelId={setLabelId}
           status={status}
           setStatus={setStatus}
+          description={description}
+          setDescription={setDescription}
         />
         {!rangeValid && <div className="ef-error">End must be after start</div>}
         <RepeatEditor value={rrule} onChange={setRrule} startDate={start.slice(0, 10)} />

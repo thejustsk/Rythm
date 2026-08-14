@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, nativeTheme } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, nativeTheme, Tray, Menu, nativeImage } from 'electron'
 import path from 'node:path'
 import { openDatabase, getDataDir } from './db/connection'
 import { migrate } from './db/schema'
@@ -11,6 +11,32 @@ import { registerWindowHandlers } from './ipc/window'
 import { registerNotificationHandlers, startNotifier } from './notify'
 
 const isDev = !app.isPackaged
+
+/** v1.11.4: the app keeps running in the SYSTEM TRAY when the window is
+ *  closed, so notifications keep firing (slot reminders etc.) even with the
+ *  window "off". Quit via the tray menu. */
+let quitting = false
+let tray: Tray | null = null
+let mainWin: BrowserWindow | null = null
+
+function setupTray(): void {
+  if (tray) return
+  try {
+  const img = nativeImage.createFromPath(path.join(__dirname, '../../assets/icon.png'))
+  tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img.resize({ width: 16, height: 16 }))
+  tray.setToolTip('Rhythm — running (notifications on)')
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Open Rhythm', click: () => { if (mainWin) { mainWin.show(); mainWin.focus() } } },
+      { type: 'separator' },
+      { label: 'Quit Rhythm', click: () => { quitting = true; app.quit() } }
+    ])
+  )
+  tray.on('click', () => { if (mainWin) { mainWin.show(); mainWin.focus() } })
+  } catch (e) {
+    console.log('[tray] not available:', e)
+  }
+}
 
 /** Resolve the stored theme (light/dark/system) to a concrete window
  *  background so the window never flashes white in dark mode. */
@@ -44,6 +70,25 @@ function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
   })
 
   win.once('ready-to-show', () => win.show())
+  mainWin = win
+
+  // v1.11.4: closing the window hides it to the tray instead of quitting —
+  // notifications stay ON. Quit via the tray menu (or app.quit()).
+  win.on('close', (e) => {
+    // harness mode (smoke/screenshot) must be able to quit normally
+    if (process.env.AC_SMOKE || process.env.AC_SCREENSHOT) return
+    if (!quitting) {
+      e.preventDefault()
+      win.hide()
+      // tell the user once, via the in-app channel (renders if visible)
+      try {
+        win.webContents.send('notify:inapp', {
+          title: 'Rhythm stays on',
+          body: 'The window is closed, but Rhythm keeps running in the tray so reminders keep working. Use Quit in the tray to stop it.'
+        })
+      } catch { /* window hidden is fine */ }
+    }
+  })
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
@@ -309,7 +354,20 @@ app.whenReady().then(async () => {
   registerWindowHandlers()
   registerNotificationHandlers(db)
 
+  // v1.11.4: Windows — launch at login toggle
+  ipcMain.handle('app:getLaunchAtStartup', () => {
+    if (process.platform !== 'win32') return false
+    try { return app.getLoginItemSettings().openAtLogin } catch { return false }
+  })
+  ipcMain.handle('app:setLaunchAtStartup', (_e, on: boolean) => {
+    if (process.platform === 'win32') {
+      try { app.setLoginItemSettings({ openAtLogin: on }) } catch { return false }
+    }
+    return process.platform === 'win32'
+  })
+
   createWindow(db)
+  setupTray()
 
   // M8: automatic daily backup (once per 24h, when enabled)
   const { runAutoBackup } = await import('./backup')
@@ -323,5 +381,6 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  // v1.11.4: keep running in the tray (notifications stay on) unless quitting
+  if (quitting && process.platform !== 'darwin') app.quit()
 })

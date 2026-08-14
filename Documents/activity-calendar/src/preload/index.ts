@@ -28,7 +28,9 @@ const api: Api = {
   app: {
     info: () => ipcRenderer.invoke('app:info'),
     openDataFolder: () => ipcRenderer.invoke('app:openDataFolder'),
-    openBackupsFolder: () => ipcRenderer.invoke('app:openBackupsFolder')
+    openBackupsFolder: () => ipcRenderer.invoke('app:openBackupsFolder'),
+    getLaunchAtStartup: () => ipcRenderer.invoke('app:getLaunchAtStartup'),
+    setLaunchAtStartup: (on: boolean) => ipcRenderer.invoke('app:setLaunchAtStartup', on)
   },
   coins: {
     scoreEvent: (eventId: string, originDate: string, scoreType: ScoreType, amount: number, labelId: string | null): Promise<{ earned: boolean; amount: number }> =>
@@ -69,7 +71,12 @@ const api: Api = {
     setConfig: (cfg: { enabled: boolean; slots: string[]; leadMin: number }) =>
       ipcRenderer.invoke('notify:setConfig', cfg),
     test: () => ipcRenderer.invoke('notify:test'),
-    resetDay: () => ipcRenderer.invoke('notify:resetDay')
+    resetDay: () => ipcRenderer.invoke('notify:resetDay'),
+    onInApp: (cb: (d: { title: string; body: string }) => void) => {
+      const listener = (_e: unknown, d: { title: string; body: string }) => cb(d)
+      ipcRenderer.on('notify:inapp', listener)
+      return () => ipcRenderer.removeListener('notify:inapp', listener)
+    }
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),

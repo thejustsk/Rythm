@@ -65,7 +65,11 @@ export default function WeekView({ days }: Props) {
     const rect = container.getBoundingClientRect()
     const head = container.querySelector('.week-head')
     const headH = head ? head.getBoundingClientRect().height : 0
-    const y = e.clientY - rect.top - headH
+    // v1.11.3: the grid is SCROLLABLE — when it is scrolled (e.g. the
+    // "day starts at" setting auto-scrolls it), a click at the visible top
+    // is NOT 00:00. Add scrollTop so the clicked position maps to the real
+    // clock time (the sticky header stays at the visible top).
+    const y = e.clientY - rect.top - headH + container.scrollTop
     const mins = snap15(y / PX_PER_MIN)
     ui.openQuickAdd(
       iso(day),

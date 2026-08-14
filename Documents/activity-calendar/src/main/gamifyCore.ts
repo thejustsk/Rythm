@@ -80,6 +80,20 @@ export function weekKey(anyDayInWeek: string): string {
   return isoD(mon)
 }
 
+/** Week-start ISO date containing the given day, honouring the user's
+ *  first-day-of-week setting (1 = Monday, 0 = Sunday). Used by the
+ *  perfect-week bonus so the AWARD matches what the calendar DISPLAYS. */
+export function weekStartIso(anyDayInWeek: string, startDow: 1 | 0): string {
+  const d = new Date(anyDayInWeek + 'T00:00:00')
+  const dow = d.getDay()
+  let diff: number
+  if (startDow === 1) diff = dow === 0 ? -6 : 1 - dow
+  else diff = dow === 0 ? 0 : -dow
+  const out = new Date(d)
+  out.setDate(out.getDate() + diff)
+  return isoD(out)
+}
+
 /** First day of the month containing the given ISO date (award key). */
 export function monthKey(anyDayInMonth: string): string {
   return anyDayInMonth.slice(0, 8) + '01'

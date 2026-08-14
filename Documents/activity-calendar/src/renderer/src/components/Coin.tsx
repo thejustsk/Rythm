@@ -37,7 +37,10 @@ export default function Coin({
   const th = Math.max(2.5, Math.round(size * 0.24 * 10) / 10) // coin thickness
   const segs = Math.max(24, Math.min(48, Math.round(size * 0.5)))
   const arc = (2 * Math.PI * r) / segs
-  const cls = `rhythm-coin${flip ? ' flip' : ''}${flipLoop ? ' flip-loop' : ''}${spinIn ? ' spin-in' : ''}${roll ? ' roll' : ''}`
+  // v1.11.3: roll is exclusive — a rolling coin never also gets flip /
+  // flip-loop / spin-in classes (two animations on one element = the old
+  // tumbling look overriding the new drop-and-roll)
+  const cls = `rhythm-coin${roll ? ' roll' : `${flip ? ' flip' : ''}${flipLoop ? ' flip-loop' : ''}${spinIn ? ' spin-in' : ''}`}`
 
   return (
     <span

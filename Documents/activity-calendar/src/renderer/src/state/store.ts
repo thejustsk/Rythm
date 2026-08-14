@@ -152,8 +152,9 @@ interface UiState {
   quickAdd: QuickAddState | null
   editorKey: string | null
   settingsOpen: boolean
+  /** which Settings tab to show: general | notifications | about | shortcuts */
+  settingsTab: 'general' | 'notifications' | 'about' | 'shortcuts'
   coinSystemConfirm: boolean
-  shortcutsOpen: boolean
   /** user prefs (Settings → General): first day of week, start hour, clock, duration */
   weekStart: 'monday' | 'sunday'
   dayStartHour: number
@@ -171,12 +172,10 @@ interface UiState {
   setSearch: (s: string) => void
   openQuickAdd: (date?: string, time?: string, durationMin?: number) => void
   closeQuickAdd: () => void
-  openSettings: () => void
+  openSettings: (tab?: 'general' | 'notifications' | 'about' | 'shortcuts') => void
   closeSettings: () => void
   openCoinSystemConfirm: () => void
   closeCoinSystemConfirm: () => void
-  toggleShortcuts: () => void
-  closeShortcuts: () => void
   /** Open the editor for a specific event (not its render key). */
   openEditor: (eventId: string, originDate: string) => void
   closeEditor: () => void
@@ -203,8 +202,8 @@ export const useUi = create<UiState>((set, get) => ({
   quickAdd: null,
   editorKey: null,
   settingsOpen: false,
+  settingsTab: 'general',
   coinSystemConfirm: false,
-  shortcutsOpen: false,
   weekStart: 'monday',
   dayStartHour: 0,
   clock24: true,
@@ -244,12 +243,10 @@ export const useUi = create<UiState>((set, get) => ({
     })
   },
   closeQuickAdd: () => set({ quickAdd: null }),
-  openSettings: () => set({ settingsOpen: true }),
+  openSettings: (tab) => set({ settingsOpen: true, settingsTab: tab ?? 'general' }),
   closeSettings: () => set({ settingsOpen: false }),
   openCoinSystemConfirm: () => set({ coinSystemConfirm: true }),
   closeCoinSystemConfirm: () => set({ coinSystemConfirm: false }),
-  toggleShortcuts: () => set((s) => ({ shortcutsOpen: !s.shortcutsOpen })),
-  closeShortcuts: () => set({ shortcutsOpen: false }),
   openEditor: (eventId, originDate) => set({ editorKey: `${eventId}|${originDate}` }),
   closeEditor: () => set({ editorKey: null })
 }))

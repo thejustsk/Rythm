@@ -124,6 +124,8 @@ export interface Api {
     info(): Promise<{ version: string; dataDir: string; backupsDir: string }>
     openDataFolder(): Promise<void>
     openBackupsFolder(): Promise<void>
+    getLaunchAtStartup(): Promise<boolean>
+    setLaunchAtStartup(on: boolean): Promise<boolean>
   }
   coins: {
     scoreEvent(eventId: string, originDate: string, scoreType: ScoreType, amount: number, labelId: string | null): Promise<{ earned: boolean; amount: number }>
@@ -154,8 +156,9 @@ export interface Api {
   notify: {
     getConfig(): Promise<{ enabled: boolean; slots: string[]; leadMin: number }>
     setConfig(cfg: { enabled: boolean; slots: string[]; leadMin: number }): Promise<{ enabled: boolean; slots: string[]; leadMin: number }>
-    test(): Promise<{ ok: boolean }>
+    test(): Promise<{ ok: boolean; reason: string }>
     resetDay(): Promise<{ ok: boolean }>
+    onInApp(cb: (d: { title: string; body: string }) => void): () => void
   }
   window: {
     minimize(): void

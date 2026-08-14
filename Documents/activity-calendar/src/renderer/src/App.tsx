@@ -11,8 +11,8 @@ import ScorePrompt from '@/components/ScorePrompt'
 import SettingsDialog from '@/components/SettingsDialog'
 import CoinScoreFx from '@/components/CoinScoreFx'
 import CoinSystemDialog from '@/components/CoinSystemDialog'
-import ShortcutSheet from '@/components/ShortcutSheet'
 import { loadTheme } from '@/state/theme'
+import { APP_VERSION, BUILD_TAG } from '@shared/version'
 import { loadPrefs } from '@/lib/prefs'
 import { installShortcuts } from '@/lib/shortcuts'
 import { weekStartOf } from '@/lib/dates'
@@ -95,6 +95,33 @@ export default function App() {
   // global keyboard shortcuts + cheat sheet (?)
   useEffect(() => installShortcuts(), [])
 
+  // v1.11.2: in-app reminders — the main process broadcasts every OS
+  // notification here too, so reminders are ALWAYS visible in the app even
+  // if Windows blocks the toast.
+  useEffect(() => {
+    return window.api.notify.onInApp((d) => {
+      useToasts.getState().push({
+        message: `🔔 ${d.title} — ${d.body}`,
+        kind: 'info',
+        duration: 7000
+      })
+    })
+  }, [])
+
+  // v1.11.2: one short startup toast proving which build is running —
+  // impossible to miss, even if the user never opens the Coins intro.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      if (document.hidden) return
+      useToasts.getState().push({
+        message: `Rhythm v${APP_VERSION} · ${BUILD_TAG} — ready`,
+        kind: 'info',
+        duration: 3500
+      })
+    }, 900)
+    return () => window.clearTimeout(t)
+  }, [loaded])
+
   const weekDays = (() => {
     const cursor = ui.cursor
     const start = weekStartOf(cursor, ui.weekStart === 'sunday' ? 0 : 1)
@@ -135,7 +162,6 @@ export default function App() {
       {ui.editorKey && <EventDialog />}
       {ui.settingsOpen && <SettingsDialog />}
       {ui.coinSystemConfirm && <CoinSystemDialog />}
-      {ui.shortcutsOpen && <ShortcutSheet />}
       <ScorePrompt />
       <CoinScoreFx />
       <ToastHost />

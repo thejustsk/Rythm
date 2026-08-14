@@ -37,20 +37,35 @@ function SegIcon({ id, active }: { id: string; active: boolean }) {
 export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
   const ui = useUi()
 
-  // v1.11: measure the Rhythm Coins pill so the rolling coin travels EXACTLY
-  // to the pill's right edge (roll distance = pill width − icon − padding).
-  // --roll-px is unitless so the wheel keyframe can compute angle = d/r.
+  // v1.11.2: measure the Rhythm Coins pill AND the active tab so the rolling
+  // coin travels right THROUGH the right edge completely — distance = from
+  // the coin's resting spot to beyond the edge + margin (fully exited). The
+  // wheel keyframe computes angle = distance / radius from --roll-px.
   useEffect(() => {
-    const pill = document.querySelector('.premium-heading.coins') as HTMLElement | null
-    if (!pill) return
-    const measure = () => {
-      const w = pill.getBoundingClientRect().width
-      pill.style.setProperty('--roll-px', String(Math.max(40, Math.round(w - 20 - 34))))
+    const measureOne = (pill: HTMLElement) => {
+      const pr = pill.getBoundingClientRect()
+      const coin = pill.querySelector('.rhythm-coin') as HTMLElement | null
+      if (!coin || pr.width === 0) return
+      const cr = coin.getBoundingClientRect()
+      const dist = pr.right - cr.left + cr.width + 20 // well past the edge
+      pill.style.setProperty('--roll-px', String(Math.max(60, Math.round(dist))))
     }
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(pill)
-    return () => ro.disconnect()
+    const measureAll = () => {
+      const pill = document.querySelector('.premium-heading.coins') as HTMLElement | null
+      if (pill) measureOne(pill)
+      const tab = document.querySelector('.seg-btn.active .seg-coin') as HTMLElement | null
+      if (tab) measureOne(tab)
+    }
+    // v1.11.3: measure NOW, then again on the next frames — a layout that
+    // isn't ready yet (width 0) would silently keep the fallback distance
+    measureAll()
+    const raf1 = requestAnimationFrame(() => requestAnimationFrame(measureAll))
+    const onResize = () => measureAll()
+    window.addEventListener('resize', onResize)
+    return () => {
+      cancelAnimationFrame(raf1)
+      window.removeEventListener('resize', onResize)
+    }
   }, [ui.view])
 
   if (minimal) {
@@ -91,8 +106,7 @@ export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
               </button>
             ))}
           </div>
-          <ShortcutsBtn />
-          <button className="icon-btn settings-btn" title="Settings" onClick={ui.openSettings} aria-label="Settings">
+          <button className="icon-btn settings-btn" title="Settings" onClick={() => ui.openSettings('general')} aria-label="Settings">
             <svg viewBox="0 0 16 16" width="15" height="15">
               <circle cx="8" cy="8" r="2.7" stroke="currentColor" strokeWidth="1.3" fill="none" />
               <g stroke="currentColor" strokeWidth="1.15" strokeLinecap="round">
@@ -130,8 +144,7 @@ export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
             </button>
           ))}
         </div>
-        <ShortcutsBtn />
-        <button className="icon-btn settings-btn" title="Settings" onClick={ui.openSettings} aria-label="Settings">
+        <button className="icon-btn settings-btn" title="Settings" onClick={() => ui.openSettings('general')} aria-label="Settings">
           <svg viewBox="0 0 16 16" width="15" height="15">
             <circle cx="8" cy="8" r="2.7" stroke="currentColor" strokeWidth="1.3" fill="none" />
             <g stroke="currentColor" strokeWidth="1.15" strokeLinecap="round">
@@ -141,23 +154,6 @@ export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
         </button>
       </div>
     </div>
-  )
-}
-
-function ShortcutsBtn() {
-  const ui = useUi()
-  return (
-    <button
-      className="icon-btn shortcuts-btn"
-      title="Keyboard shortcuts (?)"
-      aria-label="Keyboard shortcuts"
-      onClick={ui.toggleShortcuts}
-    >
-      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
-        <rect x="2.5" y="4" width="11" height="9" rx="1.5" />
-        <path d="M5.5 8.5h5M8 6.2v4.6" />
-      </svg>
-    </button>
   )
 }
 

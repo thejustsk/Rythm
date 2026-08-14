@@ -2,7 +2,7 @@ import { ipcMain } from 'electron'
 import type { Db } from '../db/connection'
 import type { CoinTransaction, ScoreRow, ScoreType } from '@shared/types'
 import {
-  checkInState, allDoneCheck, weekKey,
+  checkInState, allDoneCheck, weekKey, weekStartIso,
   addDaysIso, isoD, ALL_DONE_BONUS, PERFECT_WEEK_BONUS, PERFECT_MONTH_BONUS,
   perfectWeekCheck, perfectMonthCheck, streakMilestoneLevelsUpTo,
   defaultMilestoneCosts, streakMilestoneReward
@@ -308,10 +308,13 @@ export function registerGamifyHandlers(db: Db): void {
    *  never evaluated). */
   ipcMain.handle('coins:perfectWeek', () => {
     if (!coinsEnabled()) return { award: false, amount: 0, weekKey: null, streak: computeStreak(db) }
+    // v1.11.4: the perfect-week bonus is ALWAYS Monday–Sunday (the streak
+    // calendar is Monday-only) — consistent with what the user sees.
     const today = todayIso()
     const monOfToday = weekKey(today)
     const awarded: string[] = []
     let amount = 0
+    const hasKey = (k: string) => !!db.prepare('SELECT 1 FROM settings WHERE key = ?').get(k)
     for (let w = 0; w < 16; w++) {
       const mon = addDaysIso(monOfToday, -7 * w)
       const sun = addDaysIso(mon, 6)
@@ -323,7 +326,9 @@ export function registerGamifyHandlers(db: Db): void {
       })
       if (!perfectWeekCheck(days)) continue
       const key = 'streakAward.' + mon
-      if (db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key)) continue
+      // double-pay guard: never award a week if the overlapping Sunday-start
+      // week was already paid under an older build's setting (6-of-7 overlap)
+      if (hasKey(key) || hasKey('streakAward.' + addDaysIso(mon, -1))) continue
       db.transaction(() => {
         db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, '1')").run(key)
         db.prepare(

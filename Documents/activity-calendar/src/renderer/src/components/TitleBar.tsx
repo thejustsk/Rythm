@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
+import { APP_VERSION } from '@shared/version'
 
-/** macOS-style traffic-light title bar (frameless window). */
+/** macOS-style traffic-light title bar (frameless window). The version sits
+ *  in the title — ALWAYS visible, so we can always tell which build runs. */
 export default function TitleBar() {
   const [maximized, setMaximized] = useState(false)
 
@@ -27,7 +29,9 @@ export default function TitleBar() {
           </svg>
         </button>
       </div>
-      <div className="titlebar-title">Rhythm</div>
+      <div className="titlebar-title">
+        Rhythm <span className="titlebar-version">v{APP_VERSION}</span>
+      </div>
     </div>
   )
 }

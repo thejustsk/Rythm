@@ -61,6 +61,48 @@
   letter-spacing: 0.2px;
   color: var(--text-2);
 }
+.titlebar-version { color: var(--text-3); font-weight: 500; font-size: 10.5px; margin-left: 4px; }
+/* streak calendar: info button + colour popover (v1.11.4) */
+.streak-title-row { display: flex; align-items: center; gap: 6px; position: relative; }
+.streak-info-btn {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px;
+  filter: grayscale(1);
+  opacity: 0.7;
+  transition: opacity 0.12s ease, transform 0.1s ease;
+}
+.streak-info-btn:hover { opacity: 1; transform: scale(1.15); }
+.streak-info-pop {
+  position: absolute;
+  top: 22px;
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-2);
+  font-size: 11.5px;
+  color: var(--text-2);
+  min-width: 210px;
+}
+.streak-info-pop span { display: inline-flex; align-items: center; gap: 8px; }
+.streak-info-pop .sl { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+/* v1.11.5: the popover swatches need the SAME colours as the old footer
+   legend (they were only styled under .streak-legend → invisible) */
+.streak-info-pop .sl.done { background: var(--accent); }
+.streak-info-pop .sl.none { background: var(--surface-3); }
+.streak-info-pop .sl.missed { background: var(--text-3); }
+.streak-info-pop .sl.perfect-wk { background: transparent; border: 1.5px solid rgba(255, 159, 10, 0.7); }
+.streak-info-pop .sl.perfect-up { background: transparent; box-shadow: inset 0 0 0 1.5px rgba(255, 159, 10, 0.8); }
+.streak-info-pop .sl.perfect-m { background: var(--amber); }
 
 /* ---------- body ---------- */
 .app-body {
@@ -694,7 +736,8 @@
 .eb.done { opacity: 0.55; }
 .eb.done .eb-title { text-decoration: line-through; }
 .eb.cancelled { opacity: 0.45; filter: grayscale(1); }
-/* status colour dots — done has none (struck + dimmed already) */
+/* status colour dots — done has none (struck + dimmed already). v1.11.1:
+   the dots are PASSIVE again; the status SWITCH (top-right) changes status. */
 .eb-dot {
   width: 6px;
   height: 6px;
@@ -703,13 +746,40 @@
 }
 .eb-dot.todo { background: #8e8e93; }
 .eb-dot.doing { background: #0a84ff; animation: dotPulse 1.6s ease-in-out infinite; }
-.eb-dot.done { background: var(--green); }
 .eb-dot.cancelled { background: #ff3b30; }
-/* v1.11: the dot is a live status cycle (todo → in progress → done → todo);
-   cancelled dots are inert */
-.eb-dot.clickable { cursor: pointer; transition: transform 0.12s ease, filter 0.12s ease; }
-.eb-dot.clickable:hover { transform: scale(1.45); filter: brightness(1.2); }
-.eb-dot.clickable:active { transform: scale(0.95); }
+/* v1.11.1: status switch — a small pill in the block's top-right corner
+   (day/week views). Revealed on hover so it never clutters. */
+.eb:not(.compact) .eb-title-row { padding-right: 20px; }
+.eb-switch {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, transform 0.1s ease, background 0.12s ease;
+  padding: 0;
+  z-index: 2;
+}
+.eb:hover .eb-switch,
+.eb-switch:focus-visible { opacity: 1; }
+.eb-switch:hover { background: rgba(0, 0, 0, 0.34); transform: scale(1.12); }
+.eb-switch:active { transform: scale(0.94); }
+.eb-switch-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: block;
+}
+.eb-switch-dot.todo { background: #8e8e93; }
+.eb-switch-dot.doing { background: #0a84ff; animation: dotPulse 1.6s ease-in-out infinite; }
+.eb-switch-dot.done { background: var(--green); }
 @keyframes dotPulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
@@ -1275,50 +1345,55 @@
    its edge like a wheel → disappears at the pill's edge. The face pattern
    spins in its own plane during the roll (real wheel motion — no drunken
    tumbling). Loop repeats. ---------- */
+/* v1.11.2: ONE snappy 3.2s gesture — a quick gravity drop, a springy
+   two-bounce landing that drifts forward, then a natural decelerating roll
+   that passes THROUGH the pill's right edge completely (--roll-px is the
+   full exit distance + margin, measured in Toolbar). */
 .rhythm-coin.roll {
-  animation: coinDropRoll 4.2s infinite;
+  animation: coinDropRoll 3.2s infinite;
   will-change: transform, opacity;
   z-index: 1;
   --ground: calc(var(--size) * 0.3);
 }
 .rhythm-coin.roll .c3-tilt {
-  /* v1.11: synced to the 4.2s drop-roll (was 3.2s — the mismatch made the
-     spin look fake). The keyframes hold the wheel still through the drop +
-     bounces, then spin distance-matched while rolling. */
-  animation: rollWheel 4.2s infinite cubic-bezier(0.25, 0.4, 0.35, 1);
+  /* synced to the 3.2s drop-roll; the spin eases exactly like the travel */
+  animation: rollWheel 3.2s infinite cubic-bezier(0.3, 0.42, 0.4, 1);
 }
-/* the pill clips the coin so it drops in from the top and "disappears into
-   the pill's edge" on the right */
+/* the pill clips the coin so it drops in from the top and rolls OUT through
+   the right edge (it never visibly exits the pill's box) */
 .premium-heading, .seg-btn { position: relative; overflow: hidden; }
-/* v1.11: the pill's roll distance is measured in Toolbar (--roll-px = pill
-   width − icon − padding) so the coin ALWAYS rolls exactly to the pill's
-   right edge, whatever the pill's width. The wheel rotation is
+/* roll distance is measured in Toolbar: from the coin's resting spot to
+   BEYOND the pill's right edge (fully exited). The wheel rotation is
    distance-matched: angle = distance / radius (physics). */
 .premium-heading.coins {
   --coin-r: 10; /* pill coin radius (px, unitless) */
-  --roll: calc(var(--roll-px, 84) * 1px);
+  /* v1.11.3: fallback 220px = a FULL exit past the pill edge even if the JS
+     measurement ever fails (the old 84px fallback stopped the coin INSIDE
+     the pill — that's the "old animation" the user kept seeing) */
+  --roll: calc(var(--roll-px, 220) * 1px);
 }
-.seg-btn.active .seg-coin .rhythm-coin { --roll: calc(var(--roll-px, 54) * 1px); }
+.seg-btn.active .seg-coin .rhythm-coin { --roll: calc(var(--roll-px, 220) * 1px); }
 @keyframes coinDropRoll {
-  /* drop: pure gravity (ease-in) from above the pill */
-  0% { transform: translateX(0) translateY(calc(var(--size) * -3.4)); opacity: 0; animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.4); }
-  7% { opacity: 1; animation-timing-function: cubic-bezier(0.6, 0, 0.9, 0.4); }
-  /* touchdown + damped bounce chain: heights shrink, landings ease-out */
-  29% { transform: translateX(0) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.2, 0.7, 0.3, 1); }
-  35% { transform: translateX(2px) translateY(calc(var(--ground, 6px) * -2.1)); animation-timing-function: cubic-bezier(0.45, 0, 0.9, 0.5); }
-  42% { transform: translateX(6px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.25, 0.7, 0.35, 1); }
-  47% { transform: translateX(9px) translateY(calc(var(--ground, 6px) * -1.05)); animation-timing-function: cubic-bezier(0.45, 0, 0.9, 0.5); }
-  52% { transform: translateX(12px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.3, 0.7, 0.35, 1); }
-  /* settle and roll: decelerating (ease-out) all the way to the pill's edge */
-  56% { transform: translateX(14px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.3, 0.4, 0.4, 1); }
-  94% { transform: translateX(var(--roll, 60px)) translateY(var(--ground, 6px)); opacity: 1; animation-timing-function: cubic-bezier(0.3, 0.4, 0.4, 1); }
-  100% { transform: translateX(var(--roll, 60px)) translateY(var(--ground, 6px)); opacity: 0; }
+  /* gravity drop from above the pill — fast, natural ease-in */
+  0% { transform: translateX(0) translateY(calc(var(--size) * -3.4)); opacity: 0; animation-timing-function: cubic-bezier(0.5, 0, 0.85, 0.3); }
+  5% { opacity: 1; animation-timing-function: cubic-bezier(0.5, 0, 0.85, 0.3); }
+  /* first touchdown — the impact stops it dead (short sharp ease-out) */
+  17% { transform: translateX(0) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.16, 0.6, 0.3, 1); }
+  /* bounce 1: HIGH + springy, drifting 3px */
+  21% { transform: translateX(3px) translateY(calc(var(--ground, 6px) * -2.4)); animation-timing-function: cubic-bezier(0.42, 0, 0.88, 0.5); }
+  25% { transform: translateX(7px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.2, 0.6, 0.3, 1); }
+  /* bounce 2: half height, drifting 4px more */
+  29% { transform: translateX(11px) translateY(calc(var(--ground, 6px) * -1.1)); animation-timing-function: cubic-bezier(0.42, 0, 0.88, 0.5); }
+  32% { transform: translateX(15px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.28, 0.5, 0.34, 1); }
+  /* settle → roll: one continuous decelerating glide, fully past the edge */
+  34% { transform: translateX(18px) translateY(var(--ground, 6px)); animation-timing-function: cubic-bezier(0.32, 0.38, 0.42, 1); }
+  90% { transform: translateX(var(--roll, 120px)) translateY(var(--ground, 6px)); opacity: 1; animation-timing-function: cubic-bezier(0.32, 0.38, 0.42, 1); }
+  100% { transform: translateX(var(--roll, 120px)) translateY(var(--ground, 6px)); opacity: 0; }
 }
-/* the face pattern spins in-plane ONLY while rolling, and the total spin
-   angle equals the roll distance ÷ radius — a real wheel, with a gentle
-   deceleration to match the easing above. */
+/* the face pattern spins in-plane ONLY while rolling; the total spin angle
+   equals the roll distance ÷ radius, eased identically to the travel. */
 @keyframes rollWheel {
-  0%, 56% { transform: rotateZ(0deg) rotateX(90deg); }
+  0%, 34% { transform: rotateZ(0deg) rotateX(90deg); }
   100% { transform: rotateZ(calc(var(--roll-px, 84) / var(--coin-r, 10) * 57.296deg)) rotateX(90deg); }
 }
 /* soft ground shadow that breathes with the bounces (drop → tight → tight) */
@@ -1332,17 +1407,17 @@
   transform: translateX(-50%);
   border-radius: 50%;
   background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0) 70%);
-  animation: rollShadow 4.2s infinite;
+  animation: rollShadow 3.2s infinite;
   z-index: 0;
   pointer-events: none;
 }
 @keyframes rollShadow {
-  0% { opacity: 0.2; transform: translateX(-50%) scale(0.75); }
-  29% { opacity: 0.85; transform: translateX(-50%) scale(1.08); }
-  35% { opacity: 0.3; transform: translateX(-50%) scale(0.8); }
-  42% { opacity: 0.8; transform: translateX(-50%) scale(1.05); }
-  47% { opacity: 0.4; transform: translateX(-50%) scale(0.88); }
-  52%, 100% { opacity: 0.9; transform: translateX(-50%) scale(1.08); }
+  0% { opacity: 0.15; transform: translateX(-50%) scale(0.7); }
+  17% { opacity: 0.9; transform: translateX(-50%) scale(1.1); }
+  21% { opacity: 0.28; transform: translateX(-50%) scale(0.76); }
+  25% { opacity: 0.85; transform: translateX(-50%) scale(1.08); }
+  29% { opacity: 0.42; transform: translateX(-50%) scale(0.86); }
+  32%, 100% { opacity: 0.95; transform: translateX(-50%) scale(1.1); }
 }
 /* ---------- twinkle ✦ (shines when its tab is selected, static otherwise) ---------- */
 .seg-ico {
@@ -2127,18 +2202,24 @@
   padding: 18px;
   width: 460px;
   max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto; /* v1.11.4: tall content (repeat editor etc.) scrolls INSIDE the dialog */
   display: flex;
   flex-direction: column;
   gap: 12px;
   animation: pop 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
+.score-prompt { max-height: calc(100vh - 40px); overflow-y: auto; }
 /* edit dialog: form + repeat side by side on wider screens (no cascading) */
 .dialog.editor { width: 720px; }
 .dialog-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.25fr 1fr;
   gap: 14px;
   align-items: start;
+}
+@media (max-width: 900px) {
+  .dialog-grid { grid-template-columns: 1fr; }
 }
 .dialog-grid .ef-col { display: flex; flex-direction: column; gap: 12px; align-items: stretch; }
 .dialog-grid .ef-col .ef-desc { flex: 1; min-height: 84px; }
@@ -2497,6 +2578,41 @@
   padding: 0;
 }
 .notif-slot-x:hover { color: var(--red); }
+
+/* ---------- date+time fields (v1.11.3) ----------
+   The create/edit widgets render date + time in ONE row: 24h mode uses a
+   time input; 12h mode uses hour + minute selects + an AM/PM toggle. */
+/* v1.11.5: Start/End fields — each field is a labelled column; the two sit
+   side by side when they FIT, and wrap to TWO ROWS automatically when they
+   don't (12h mode with hour+minute+AM/PM, or the editor's narrow column).
+   No fixed heights — the fields inherit the standard input styling. */
+.ef-times { display: flex; flex-wrap: wrap; gap: 10px; }
+.ef-times .ef-label { flex: 1 1 210px; min-width: 210px; }
+.ef-dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+.ef-dt .ef-date { flex: 1 1 0; min-width: 0; }
+.ef-dt .ef-time { flex: 0 1 auto; }
+.ef-dt .ef-time-h, .ef-dt .ef-time-m { width: 60px; flex: none; }
+.ef-ampm {
+  flex: none;
+  width: 56px;
+  padding: 7px 0;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.ef-ampm:hover { background: var(--surface-3); border-color: var(--accent); }
 
 /* ---------- toasts ---------- */
 .toast-host {

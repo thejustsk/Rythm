@@ -334,7 +334,7 @@ export default function Sidebar() {
       <div className="side-section today-card">
         <div className="side-title">Today</div>
         <div className="today-stats">
-          <span className="today-count">{todayStats.count}</span> blocks
+          <span className="today-count">{todayStats.count}</span> event{todayStats.count === 1 ? '' : 's'}
           <span className="dot-sep">·</span>
           <span className="today-hours">{todayStats.hours.toFixed(1)}h</span> planned
           <span className="dot-sep">·</span>

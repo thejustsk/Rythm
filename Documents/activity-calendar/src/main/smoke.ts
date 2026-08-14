@@ -20,6 +20,7 @@ const SET_VALUE = `(el, value) => {
   el.dispatchEvent(new Event('change', { bubbles: true }))
 }`
 
+
 export async function runSmoke(win: BrowserWindow, outPath: string): Promise<void> {
   const results: string[] = []
   const check = (name: string, ok: boolean, extra = '') => {
@@ -34,6 +35,48 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       throw e
     }
   }
+
+/** Set a date+time on an .ef-dt field (works in 24h and 12h modes).
+ *  val = 'yyyy-MM-ddTHH:mm'. */
+const setDT = (rootSel: string, idx: number, val: string) =>
+  js(`(() => {
+    const wrap = document.querySelectorAll('${rootSel} .ef-dt')[${idx}]
+    if (!wrap) return false
+    const date = '${val.slice(0, 10)}', hm = '${val.slice(11, 16)}'
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    const dateEl = wrap.querySelector('.ef-date')
+    if (dateEl) { setter.call(dateEl, date); dateEl.dispatchEvent(new Event('input', { bubbles: true })) }
+    const timeEl = wrap.querySelector('.ef-time')
+    if (timeEl) { setter.call(timeEl, hm); timeEl.dispatchEvent(new Event('input', { bubbles: true })); return true }
+    const h = parseInt(hm.slice(0, 2), 10), m = parseInt(hm.slice(3, 5), 10)
+    const ssetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set
+    const hEl = wrap.querySelector('.ef-time-h'), mEl = wrap.querySelector('.ef-time-m')
+    if (!hEl || !mEl) return false
+    const ampm = h >= 12 ? 'PM' : 'AM'
+    let h12 = h % 12; if (h12 === 0) h12 = 12
+    ssetter.call(hEl, String(h12)); hEl.dispatchEvent(new Event('change', { bubbles: true }))
+    ssetter.call(mEl, String(m)); mEl.dispatchEvent(new Event('change', { bubbles: true }))
+    const ap = wrap.querySelector('.ef-ampm')
+    if (ap && ap.textContent !== ampm) ap.click()
+    return true
+  })()`)
+
+/** Read the full 'yyyy-MM-ddTHH:mm' from an .ef-dt field (either mode). */
+const getDT = (rootSel: string, idx: number) =>
+  js(`(() => {
+    const wrap = document.querySelectorAll('${rootSel} .ef-dt')[${idx}]
+    if (!wrap) return ''
+    const dateEl = wrap.querySelector('.ef-date')
+    const date = dateEl ? dateEl.value || '' : ''
+    const t = wrap.querySelector('.ef-time')
+    if (t) return t.value ? date + 'T' + t.value : date
+    const hEl = wrap.querySelector('.ef-time-h'), mEl = wrap.querySelector('.ef-time-m'), ap = wrap.querySelector('.ef-ampm')
+    if (!hEl || !mEl) return date
+    let h = parseInt(hEl.value, 10) || 12
+    if (ap && ap.textContent === 'PM') h = h === 12 ? 12 : h + 12
+    else if (ap && ap.textContent === 'AM') h = h === 12 ? 0 : h
+    return date + 'T' + String(h).padStart(2, '0') + ':' + String(parseInt(mEl.value, 10) || 0).padStart(2, '0')
+  })()`)
 
   // date helpers — the smoke test must be relative to "today"
   const pad2 = (n: number) => String(n).padStart(2, '0')
@@ -207,9 +250,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
 
     // 2. fill the form and add a new activity
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke test activity')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T15:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T15:00`)
     await sleep(150)
-    const endVal = await js(`document.querySelectorAll('.quickadd input[type=datetime-local]')[1].value`)
+    const endVal = await getDT('.quickadd', 1)
     check('end time auto-shifts with start', endVal === TODAY + 'T16:00', `end=${endVal}`)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
@@ -230,7 +273,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(300)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke weekly qa')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TOMORROW}T10:00')`)
+    await setDT('.quickadd', 0, `${TOMORROW}T10:00`)
     await sleep(150)
     await js(`Array.from(document.querySelectorAll('.quickadd .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'Weekly').click()`)
     await sleep(200)
@@ -327,7 +370,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke applywalk')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T06:30')`)
+    await setDT('.quickadd', 0, `${TODAY}T06:30`)
     await sleep(100)
     await js(`Array.from(document.querySelectorAll('.quickadd .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'Daily').click()`)
     await sleep(200)
@@ -443,9 +486,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       await js(`document.querySelector('.new-btn').click()`)
       await sleep(250)
       await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), '${title}')`)
-      await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T${startT}')`)
+      await setDT('.quickadd', 0, `${TODAY}T${startT}`)
       await sleep(100)
-      await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T${endT}')`)
+      await setDT('.quickadd', 1, `${TODAY}T${endT}`)
       await sleep(100)
       await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
       await sleep(400)
@@ -459,7 +502,11 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       })()`)
       await sleep(200)
     }
-    // times chosen to avoid the seeded daily events (deep work, lunch, yoga…)
+    // pin to TODAY first: the seeded "Weekly review" (16:00–17:00) exists on
+    // some past days and would join the cluster (flaky 3-way split); today is
+    // guaranteed clear at these times
+    await js(`document.querySelector('.today-btn')?.click()`)
+    await sleep(400)
     await addQuick('Smoke ovl A', '16:00', '17:00')
     await addQuick('Smoke ovl B', '16:30', '17:30')
     await addQuick('Smoke solo', '12:00', '12:30')
@@ -473,8 +520,8 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       return { a: w('Smoke ovl A'), b: w('Smoke ovl B'), solo: w('Smoke solo') }
     })()`)
     check(
-      'overlapping blocks split ~50%',
-      !!widths && widths.a! > 0.35 && widths.a! < 0.7 && widths.b! > 0.35 && widths.b! < 0.7,
+      'overlapping blocks share the column FAIRLY (equal widths) and are not full width',
+      !!widths && widths.a! > 0.28 && widths.a! < 0.95 && Math.abs(widths.a! - widths.b!) < 0.02,
       JSON.stringify(widths)
     )
     check('standalone block keeps full width', !!widths && widths.solo! > 0.92, JSON.stringify(widths))
@@ -960,18 +1007,25 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
 
-    // 2m. status colour dots: doing = blue dot; done = GREEN dot (v1.11:
-    //     every status dot is a live cycle button, including done)
+    // 2m. status colour dots: doing = blue dot; done = NO dot (v1.11.1: dots
+    //     are passive again — the corner SWITCH changes status)
     const doingDots = await js(`document.querySelectorAll('.eb-dot.doing').length`)
     check('in-progress events show a blue dot', doingDots >= 1, String(doingDots))
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Month').click()`)
     await sleep(400)
     const doneBlockDot = await js(`(() => {
       const el = Array.from(document.querySelectorAll('.eb.done')).find((e) => e.querySelector('.eb-title'))
-      const dot = el ? el.querySelector('.eb-dot') : null
-      return dot ? { cls: dot.className, clickable: dot.classList.contains('clickable') } : 'no dot'
+      return el ? (el.querySelector('.eb-dot') === null && el.querySelector('.eb-switch') === null ? 'no dot, no switch (compact)' : 'bad') : 'no done block'
     })()`)
-    check('v1.11: done blocks show a GREEN clickable dot', typeof doneBlockDot === 'object' && doneBlockDot.cls.includes('done') && doneBlockDot.clickable, JSON.stringify(doneBlockDot))
+    check('v1.11.1: done blocks have no dot and no switch in the month view', doneBlockDot === 'no dot, no switch (compact)', doneBlockDot)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    const wkSwitch = await js(`(() => {
+      const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Deep work') || e.textContent.includes('Morning walk'))
+      const sw = el ? el.querySelector('.eb-switch') : null
+      return { has: !!sw, aria: sw ? sw.getAttribute('aria-label') || '' : '' }
+    })()`)
+    check('v1.11.1: day/week blocks have a status switch (top-right)', wkSwitch.has && wkSwitch.aria.includes('Change status'), JSON.stringify(wkSwitch))
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
 
@@ -1027,9 +1081,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke overnight')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T22:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T22:00`)
     await sleep(100)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TOMORROW}T00:30')`)
+    await setDT('.quickadd', 1, `${TOMORROW}T00:30`)
     await sleep(100)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
@@ -1054,14 +1108,14 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke invalid')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T10:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T10:00`)
     await sleep(100)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T09:00')`)
+    await setDT('.quickadd', 1, `${TODAY}T09:00`)
     await sleep(250)
     const addDisabled = await js(`document.querySelector('.quickadd .btn.primary').disabled`)
     const errShown = await js(`!!document.querySelector('.quickadd .ef-error')`)
     check('quickadd blocks end-before-start (disabled + error)', addDisabled && errShown)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T10:30')`)
+    await setDT('.quickadd', 1, `${TODAY}T10:30`)
     await sleep(200)
     const addEnabled = await js(`!document.querySelector('.quickadd .btn.primary').disabled`)
     check('quickadd allows valid range', addEnabled)
@@ -1071,12 +1125,14 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     console.log('[smoke] 2q dwProbe:', JSON.stringify(dwProbe))
     await realClick(dwProbe && dwProbe !== 'no block' ? { x: dwProbe.x, y: dwProbe.y } : null)
     await sleep(350)
-    const dwProbe2 = await js(`({ editor: !!document.querySelector('.editor'), inputs: document.querySelectorAll('.editor input[type=datetime-local]').length, title: document.querySelector('.editor .ef-title')?.value ?? null })`)
+    const dwProbe2 = await js(`({ editor: !!document.querySelector('.editor'), inputs: document.querySelectorAll('.editor .ef-dt').length, title: document.querySelector('.editor .ef-title')?.value ?? null })`)
     console.log('[smoke] 2q dwProbe2:', JSON.stringify(dwProbe2))
-    const startValShown = await js(`document.querySelectorAll('.editor input[type=datetime-local]')[0].value`)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[1], '${startValShown.slice(0, 10)}T08:00')`)
+    const startValShown = await getDT('.editor', 0)
+    await setDT('.editor', 1, `${startValShown.slice(0, 10)}T08:00`)
     await sleep(300)
-    const valProbe = await js(`({ endVal: document.querySelectorAll('.editor input[type=datetime-local]')[1].value, startVal: document.querySelectorAll('.editor input[type=datetime-local]')[0].value, saveDisabled: document.querySelector('.editor .btn.primary').disabled, err: !!document.querySelector('.editor .ef-error') })`)
+    const valEnd = await getDT('.editor', 1)
+    const valStart = await getDT('.editor', 0)
+    const valProbe = await js(`({ endVal: '${valEnd}', startVal: '${valStart}', saveDisabled: document.querySelector('.editor .btn.primary').disabled, err: !!document.querySelector('.editor .ef-error') })`)
     console.log('[smoke] 2q valProbe:', JSON.stringify(valProbe))
     const saveDisabled = valProbe.saveDisabled
     const errShown2 = valProbe.err
@@ -1088,7 +1144,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke split')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T10:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T10:00`)
     await sleep(100)
     await js(`Array.from(document.querySelectorAll('.quickadd .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'Daily').click()`)
     await sleep(200)
@@ -1143,9 +1199,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke night')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T22:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T22:00`)
     await sleep(100)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TOMORROW}T00:30')`)
+    await setDT('.quickadd', 1, `${TOMORROW}T00:30`)
     await sleep(100)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
@@ -1157,7 +1213,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     // click the day-2 chunk directly (robust: no coordinate math)
     const nightClicked = await js(`(() => { const col = document.querySelector('.day-col[data-day="${TOMORROW}"]'); if (!col) return 'no col'; const el = Array.from(col.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke night')); if (!el) return 'no block'; el.click(); return 'ok' })()`)
     await sleep(400)
-    const nightProbe = await js(`({ editor: !!document.querySelector('.editor'), endVal: document.querySelectorAll('.editor input[type=datetime-local]')[1]?.value ?? '', startVal: document.querySelectorAll('.editor input[type=datetime-local]')[0]?.value ?? '' })`)
+    const nightEnd = await getDT('.editor', 1)
+    const nightStart = await getDT('.editor', 0)
+    const nightProbe = await js(`({ editor: !!document.querySelector('.editor'), endVal: '${nightEnd}', startVal: '${nightStart}' })`)
     console.log('[smoke] 2s nightProbe:', JSON.stringify(nightProbe))
     const nightEndVal = nightProbe.endVal
     check('overnight edit shows the real next-day end', nightEndVal === `${TOMORROW}T01:30`, nightEndVal)
@@ -1185,9 +1243,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       await js(`document.querySelector('.new-btn').click()`)
       await sleep(250)
       await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), '${title}')`)
-      await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T${st}')`)
+      await setDT('.quickadd', 0, `${TODAY}T${st}`)
       await sleep(100)
-      await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T${en}')`)
+      await setDT('.quickadd', 1, `${TODAY}T${en}`)
       await sleep(100)
       await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
       await sleep(400)
@@ -1284,7 +1342,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke ownpart')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T15:30')`)
+    await setDT('.quickadd', 0, `${TODAY}T15:30`)
     await sleep(100)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd select'), 'lbl-fitness')`)
     await sleep(100)
@@ -1353,9 +1411,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke night2')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T22:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T22:00`)
     await sleep(100)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TOMORROW}T00:30')`)
+    await setDT('.quickadd', 1, `${TOMORROW}T00:30`)
     await sleep(100)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
@@ -1453,7 +1511,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.today-btn')?.click()`) // reset to the current week (a prior test navigated away)
     await sleep(300)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke seredit')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${'${'}TODAY}T06:30')`)
+    await setDT('.quickadd', 0, `${TODAY}T06:30`)
     await sleep(100)
     await js(`Array.from(document.querySelectorAll('.quickadd .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'Daily').click()`)
     await sleep(200)
@@ -1465,7 +1523,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       await js(`document.querySelector('.new-btn').click()`)
       await sleep(250)
       await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke seredit')`)
-      await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T06:30')`)
+      await setDT('.quickadd', 0, `${TODAY}T06:30`)
       await sleep(100)
       await js(`Array.from(document.querySelectorAll('.quickadd .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'Daily').click()`)
       await sleep(200)
@@ -1482,13 +1540,14 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     const d1Iso = `${d1.getFullYear()}-${String(d1.getMonth() + 1).padStart(2, '0')}-${String(d1.getDate()).padStart(2, '0')}`
     const walkLater = await js(`(() => { const col = document.querySelector('.day-col[data-day="${d1Iso}"]'); if (!col) return null; const el = Array.from(col.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke seredit')); if (!el) return null; el.click(); return true })()`)
     await sleep(450)
-    const wEd = await js(`({ editor: !!document.querySelector('.editor'), startVal: document.querySelectorAll('.editor input[type=datetime-local]')[0]?.value ?? '', applyTo: Array.from(document.querySelectorAll('.apply-to .seg-btn')).map((b) => b.textContent.trim()) })`)
+    const wEdStart = await getDT('.editor', 0)
+    const wEd = await js(`({ editor: !!document.querySelector('.editor'), startVal: '${wEdStart}', applyTo: Array.from(document.querySelectorAll('.apply-to .seg-btn')).map((b) => b.textContent.trim()) })`)
     check('series edit opens on the later day', wEd.editor && wEd.startVal.startsWith(d1Iso), JSON.stringify(wEd))
     await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
     await sleep(250)
-    const tStart = await js(`document.querySelectorAll('.editor input[type=datetime-local]')[0].value`)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[0], '${'${tStart.slice(0, 10)}T07:00'}')`)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[1], '${'${tStart.slice(0, 10)}T07:45'}')`)
+    const tStart = await getDT('.editor', 0)
+    await setDT('.editor', 0, `${tStart.slice(0, 10)}T07:00`)
+    await setDT('.editor', 1, `${tStart.slice(0, 10)}T07:45`)
     await sleep(200)
     await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
     await sleep(700)
@@ -1500,8 +1559,8 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await openEditorOn('Smoke seredit')
     await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
     await sleep(250)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[0], '${'${wBefore.start_local.slice(0, 10)}T06:30'}')`)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[1], '${'${wBefore.start_local.slice(0, 10)}T07:15'}')`)
+    await setDT('.editor', 0, `${wBefore.start_local.slice(0, 10)}T06:30`)
+    await setDT('.editor', 1, `${wBefore.start_local.slice(0, 10)}T07:15`)
     await sleep(200)
     await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
     await sleep(700)
@@ -1520,9 +1579,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke vis')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T22:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T22:00`)
     await sleep(100)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TOMORROW}T00:30')`)
+    await setDT('.quickadd', 1, `${TOMORROW}T00:30`)
     await sleep(100)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
@@ -1537,9 +1596,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     // edit-panel trimming: set end to 00:00 (same day) → event becomes same-day
     const visDel = await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke vis')); if (!el) return false; el.click(); return true })()`)
     await sleep(400)
-    const visEnd = await js(`document.querySelectorAll('.editor input[type=datetime-local]')[1]?.value ?? ''`)
+    const visEnd = await getDT('.editor', 1)
     check('multiday edit shows the REAL end for trimming', visEnd.startsWith(`${TOMORROW}T00:`), visEnd)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[1], '${TOMORROW}T00:00')`)
+    await setDT('.editor', 1, `${TOMORROW}T00:00`)
     await sleep(200)
     await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
     await sleep(600)
@@ -1558,9 +1617,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke endday')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T22:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T22:00`)
     await sleep(100)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TOMORROW}T00:30')`)
+    await setDT('.quickadd', 1, `${TOMORROW}T00:30`)
     await sleep(100)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
@@ -1569,11 +1628,13 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     // open editor, trim end to same day 23:00 (valid: after start 22:00)
     const edClick = await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke endday')); if (!el) return false; el.click(); return true })()`)
     await sleep(400)
-    const endShown = await js(`document.querySelectorAll('.editor input[type=datetime-local]')[1]?.value ?? ''`)
+    const endShown = await getDT('.editor', 1)
     check('multiday editor shows next-day end', endShown === `${TOMORROW}T00:30`, endShown)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[1], '${TODAY}T23:00')`)
+    await setDT('.editor', 1, `${TODAY}T23:00`)
     await sleep(300)
-    const probeEnd = await js(`({ inputVal: document.querySelectorAll('.editor input[type=datetime-local]')[1].value, startVal: document.querySelectorAll('.editor input[type=datetime-local]')[0].value, saveDisabled: document.querySelector('.editor .btn.primary').disabled })`)
+    const probeEndVal = await getDT('.editor', 1)
+    const probeStartVal = await getDT('.editor', 0)
+    const probeEnd = await js(`({ inputVal: '${probeEndVal}', startVal: '${probeStartVal}', saveDisabled: document.querySelector('.editor .btn.primary').disabled })`)
     console.log('[smoke] 2aj probeEnd:', JSON.stringify(probeEnd))
     const saveEnabled = !probeEnd.saveDisabled
     check('same-day trim is valid (Save enabled)', saveEnabled, JSON.stringify(probeEnd))
@@ -1588,7 +1649,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     const d3Iso = `${d3.getFullYear()}-${String(d3.getMonth() + 1).padStart(2, '0')}-${String(d3.getDate()).padStart(2, '0')}`
     await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke endday')); if (el) el.click(); return !!el })()`)
     await sleep(400)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[1], '${d3Iso}T01:00')`)
+    await setDT('.editor', 1, `${d3Iso}T01:00`)
     await sleep(250)
     await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
     await sleep(600)
@@ -1629,9 +1690,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke multiag')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T22:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T22:00`)
     await sleep(100)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TOMORROW}T00:30')`)
+    await setDT('.quickadd', 1, `${TOMORROW}T00:30`)
     await sleep(100)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
@@ -1665,9 +1726,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke coin')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T10:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T10:00`)
     await sleep(100)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T11:00')`)
+    await setDT('.quickadd', 1, `${TODAY}T11:00`)
     await sleep(100)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
@@ -1771,7 +1832,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke cwalk')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T10:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T10:00`)
     await sleep(100)
     await js(`Array.from(document.querySelectorAll('.quickadd .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'Daily').click()`)
     await sleep(200)
@@ -1835,9 +1896,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke cdate')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T10:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T10:00`)
     await sleep(100)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T11:00')`)
+    await setDT('.quickadd', 1, `${TODAY}T11:00`)
     await sleep(100)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
@@ -1852,9 +1913,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     // now move the date to tomorrow while still done
     await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke cdate')); if (el) el.click(); return !!el })()`)
     await sleep(400)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[0], '${TOMORROW}T10:00')`)
+    await setDT('.editor', 0, `${TOMORROW}T10:00`)
     await sleep(200)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.editor input[type=datetime-local]')[1], '${TOMORROW}T11:00')`)
+    await setDT('.editor', 1, `${TOMORROW}T11:00`)
     await sleep(200)
     await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save').click()`)
     await sleep(700)
@@ -1893,9 +1954,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke undocoins')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T10:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T10:00`)
     await sleep(100)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T11:00')`)
+    await setDT('.quickadd', 1, `${TODAY}T11:00`)
     await sleep(100)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
@@ -1936,9 +1997,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke res')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T10:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T10:00`)
     await sleep(100)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T11:00')`)
+    await setDT('.quickadd', 1, `${TODAY}T11:00`)
     await sleep(100)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
@@ -2005,18 +2066,18 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke alldone A')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T10:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T10:00`)
     await sleep(100)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T10:30')`)
+    await setDT('.quickadd', 1, `${TODAY}T10:30`)
     await sleep(100)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke alldone B')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T11:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T11:00`)
     await sleep(100)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T11:30')`)
+    await setDT('.quickadd', 1, `${TODAY}T11:30`)
     await sleep(100)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
@@ -2079,7 +2140,11 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     const promptDuringIntro = await js(`!!document.querySelector('.coin-drop') && !document.querySelector('.reward-batch')`)
     check('reward prompt does NOT appear during the intro', promptDuringIntro)
     const introVer = await js(`document.querySelector('.intro-word-ver')?.textContent ?? ''`)
-    check('intro shows version tag (build identification)', introVer.includes('v1.11.0'), introVer)
+    check('intro shows version tag (build identification)', introVer.includes('v1.11.5'), introVer)
+    const titleVer = await js(`document.querySelector('.titlebar-title')?.textContent ?? ''`)
+    const sideVer = await js(`document.querySelector('.sidebar-version')?.textContent ?? ''`)
+    check('v1.11.3: title bar shows the build version', titleVer.includes('v1.11.5'), titleVer)
+    check('v1.11.4: sidebar has no version footer', !sideVer, String(sideVer))
     // v1.10.6: the coin system is named "Rhythm Coins" everywhere
     const naming = await js(`(() => {
       const tab = Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins'))
@@ -2091,8 +2156,8 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       }
     })()`)
     check('v1.10.6: coin system named "Rhythm Coins" (tab, heading, pill tooltip)', naming.tab.includes('Rhythm Coins') && naming.pill.includes('Rhythm Coins') && naming.pillTitle.includes('Rhythm Coins'), JSON.stringify(naming))
-    const noSideVer = await js(`!document.querySelector('.sidebar-version')`)
-    check('no version tag in the sidebar', noSideVer)
+    const sideToday = await js(`document.querySelector('.today-card')?.textContent ?? ''`)
+    check('v1.11.4: today card shows "N events · Xh planned · N done"', /\d+ events?/.test(sideToday) && sideToday.includes('planned') && /\d+ done/.test(sideToday), sideToday)
     const flipAnim = await js(`(() => {
       const read = (el) => {
         if (!el) return {}
@@ -2506,7 +2571,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke occwalk')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T06:30')`)
+    await setDT('.quickadd', 0, `${TODAY}T06:30`)
     await sleep(100)
     await js(`Array.from(document.querySelectorAll('.quickadd .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'Daily').click()`)
     await sleep(200)
@@ -2799,8 +2864,8 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
 
     // 2j. bug 2 — the editor must show the SELECTED occurrence's date
     await openEditorOn('Smoke occwalk')
-    const edStart = await js(`document.querySelector('.editor input[type=datetime-local]')?.value ?? ''`)
-    const edEnd = await js(`document.querySelectorAll('.editor input[type=datetime-local]')[1]?.value ?? ''`)
+    const edStart = await getDT('.editor', 0)
+    const edEnd = await getDT('.editor', 1)
     check('editor shows the selected occurrence date', edStart === `${TODAY}T06:30`, `${edStart} vs ${TODAY}T06:30`)
     check('editor end matches the selected occurrence', edEnd === `${TODAY}T07:30`, edEnd)
     await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'doing')`)
@@ -2902,9 +2967,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(300)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke tiny')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T08:00')`)
+    await setDT('.quickadd', 0, `${TODAY}T08:00`)
     await sleep(150)
-    await js(`(${SET_VALUE})(document.querySelectorAll('.quickadd input[type=datetime-local]')[1], '${TODAY}T08:15')`)
+    await setDT('.quickadd', 1, `${TODAY}T08:15`)
     await sleep(150)
     await js(`document.querySelector('.quickadd .dialog-actions .btn.primary').click()`)
     await sleep(500)
@@ -3046,7 +3111,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.new-btn').click()`)
     await sleep(250)
     await js(`(${SET_VALUE})(document.querySelector('.quickadd .ef-title'), 'Smoke dragwalk')`)
-    await js(`(${SET_VALUE})(document.querySelector('.quickadd input[type=datetime-local]'), '${TODAY}T06:30')`)
+    await setDT('.quickadd', 0, `${TODAY}T06:30`)
     await sleep(100)
     await js(`Array.from(document.querySelectorAll('.quickadd .re-freq .seg-btn')).find((b) => b.textContent.trim() === 'Daily').click()`)
     await sleep(200)
@@ -3203,12 +3268,20 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     check('cup5: streak calendar rows are dynamic (4-6, not always 6)', dynRows.streakRows >= 4 && dynRows.streakRows <= 6, JSON.stringify(dynRows))
     check('cup5: mini-month cells are dynamic (28-42, not always 42)', dynRows.miniCells >= 28 && dynRows.miniCells <= 42 && dynRows.miniCells % 7 === 0, JSON.stringify(dynRows))
     // CUP-5: streak calendar footer legend includes the 2 new styles
-    const legend = await js(`(() => ({
-      perfectWk: !!document.querySelector('.streak-legend .sl.perfect-wk'),
-      perfectM: !!document.querySelector('.streak-legend .sl.perfect-m'),
-      text: document.querySelector('.streak-legend')?.textContent ?? ''
+    const legend = await js(`(() => {
+      const btn = document.querySelector('.streak-info-btn')
+      if (btn) btn.click()
+      return { hasBtn: !!btn }
+    })()`)
+    await sleep(300)
+    const legendPop = await js(`(() => ({
+      perfectWk: !!document.querySelector('.streak-info-pop .sl.perfect-wk'),
+      perfectM: !!document.querySelector('.streak-info-pop .sl.perfect-m'),
+      text: document.querySelector('.streak-info-pop')?.textContent ?? ''
     }))()`)
-    check('cup5: streak calendar legend shows perfect week + perfect month styles', legend.perfectWk && legend.perfectM && legend.text.includes('perfect week') && legend.text.includes('perfect month'), JSON.stringify(legend))
+    await js(`document.querySelector('.streak-info-btn')?.click()`)
+    await sleep(200)
+    check('cup5: streak calendar info popover shows perfect week + perfect month styles', legend.hasBtn && legendPop.perfectWk && legendPop.perfectM && legendPop.text.includes('perfect week') && legendPop.text.includes('perfect month'), JSON.stringify(legendPop))
 
     // navigate the mini-month one step back → the perfect month → golden dots
     await js(`document.querySelector('.streak-month .mm-nav')?.click()`)
@@ -3222,6 +3295,27 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     // streak card present with a numeric value
     const streakCard = await js(`(() => { const c = document.querySelector('.streak-kpi'); return { has: !!c, text: c ? c.textContent : '' } })()`)
     check('streak card present with a value', streakCard.has && /\d+d/.test(streakCard.text), streakCard.text)
+    // v1.11.4: info button on the Streak calendar heading; footer legend removed
+    const streakInfo = await js(`(() => ({
+      btn: !!document.querySelector('.streak-info-btn'),
+      footLegend: !!document.querySelector('.streak-legend')
+    }))()`)
+    check('v1.11.4: streak calendar has an info button and NO footer legend', streakInfo.btn && !streakInfo.footLegend, JSON.stringify(streakInfo))
+    await js(`document.querySelector('.streak-info-btn')?.click()`)
+    await sleep(300)
+    const streakPop = await js(`(() => {
+      const pop = document.querySelector('.streak-info-pop')
+      const done = pop ? pop.querySelector('.sl.done') : null
+      return {
+        pop: !!pop,
+        hasPerfect: (pop?.textContent ?? '').includes('perfect week'),
+        doneBg: done ? getComputedStyle(done).backgroundColor : ''
+      }
+    })()`)
+    check('v1.11.4: streak info button opens the colour popover', streakPop.pop && streakPop.hasPerfect, JSON.stringify(streakPop))
+    check('v1.11.5: popover swatches show REAL colours (not just text)', streakPop.doneBg !== '' && streakPop.doneBg !== 'rgba(0, 0, 0, 0)' && streakPop.doneBg !== 'transparent', JSON.stringify(streakPop))
+    await js(`document.querySelector('.streak-info-btn')?.click()`)
+    await sleep(200)
     // CUP-5b: streak history — old done days (beyond the old 12-week window) must
     // update the streak AND be styled in the streak calendar
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
@@ -3349,6 +3443,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await sleep(400)
     const setOpen = await js(`!!document.querySelector('.settings-dialog')`)
     check('M8: settings dialog opens from the gear button', setOpen)
+    // ensure the GENERAL tab is active (the dialog remembers the last tab)
+    await js(`(() => { const b = Array.from(document.querySelectorAll('.set-tab')).find((t) => t.textContent === 'General'); if (b) b.click(); return !!b })()`)
+    await sleep(300)
     // theme: switch to DARK → <html data-theme> + body bg change + persisted
     const darkRes = await js(`(async () => {
       const btn = Array.from(document.querySelectorAll('.theme-seg .seg-btn')).find((b) => b.textContent.trim() === 'Dark')
@@ -3474,16 +3571,19 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       const coin = pill ? pill.querySelector('.rhythm-coin') : null
       if (!pill || !coin) return null
       const tilt = coin.querySelector('.c3-tilt')
+      const pr = pill.getBoundingClientRect()
+      const cr = coin.getBoundingClientRect()
       return {
         rollPx: pill.style.getPropertyValue('--roll-px'),
-        containerType: getComputedStyle(pill).containerType,
+        pillW: Math.round(pr.width),
+        distToEdge: Math.round(pr.right - cr.left + cr.width),
         wheelAnim: tilt ? getComputedStyle(tilt).animationName : '',
         dropAnim: getComputedStyle(coin).animationName,
         shadow: getComputedStyle(coin, '::after').animationName,
         shadowContent: getComputedStyle(coin, '::after').content !== 'none'
       }
     })()`)
-    check('v1.11: coin roll measured to the pill edge + authentic wheel + ground shadow', !!coinPill && parseInt(coinPill.rollPx, 10) > 60 && coinPill.wheelAnim === 'rollWheel' && coinPill.dropAnim === 'coinDropRoll' && coinPill.shadow === 'rollShadow' && coinPill.shadowContent, JSON.stringify(coinPill))
+    check('v1.11.1: coin rolls THROUGH the pill edge completely (distance > pill width) + authentic wheel + ground shadow', !!coinPill && parseInt(coinPill.rollPx, 10) > coinPill.distToEdge && coinPill.wheelAnim === 'rollWheel' && coinPill.dropAnim === 'coinDropRoll' && coinPill.shadow === 'rollShadow' && coinPill.shadowContent, JSON.stringify(coinPill))
     // the wheel spin must be SYNCED with the drop-roll (4.2s, not the old 3.2s)
     const wheelSync = await js(`(() => {
       const coin = document.querySelector('.premium-heading.coins .rhythm-coin')
@@ -3492,7 +3592,7 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       const m = a.match(/^([0-9]+[.]?[0-9]*)s/)
       return { anim: a, secs: m ? parseFloat(m[1]) : 0 }
     })()`)
-    check('v1.11: wheel spin synced to the 4.2s drop-roll', wheelSync.secs === 4.2, JSON.stringify(wheelSync))
+    check('v1.11.3: wheel spin synced to the 3.2s drop-roll', wheelSync.secs === 3.2, JSON.stringify(wheelSync))
     // wheel keyframe must be distance-matched (no fixed 540deg)
     const wheelKf = await js(`(() => {
       for (const ss of Array.from(document.styleSheets)) {
@@ -3530,29 +3630,100 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`window.__rhythmData.load()`)
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(700)
-    const clickDot = async (title: string) => {
-      await js(`(() => { const eb = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('${title}')); const dot = eb && eb.querySelector('.eb-dot'); if (dot) dot.click(); return !!dot })()`)
+    const clickSwitch = async (title: string) => {
+      await js(`(() => { const eb = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('${title}')); const sw = eb && eb.querySelector('.eb-switch'); if (sw) sw.click(); return !!sw })()`)
       await sleep(700)
     }
-    await clickDot('DotTest')
+    const blockCountBefore = await js(`Array.from(document.querySelectorAll('.eb')).filter((e) => e.textContent.includes('DotTest')).length`)
+    await clickSwitch('DotTest')
     const st1 = await js(`window.api.events.list().then((es) => es.find((e) => e.title === 'DotTest')?.status ?? '')`)
-    await clickDot('DotTest')
+    await clickSwitch('DotTest')
     const st2 = await js(`window.api.events.list().then((es) => es.find((e) => e.title === 'DotTest')?.status ?? '')`)
-    await clickDot('DotTest')
+    await clickSwitch('DotTest')
     const st3 = await js(`window.api.events.list().then((es) => es.find((e) => e.title === 'DotTest')?.status ?? '')`)
-    check('v1.11: status dot cycles todo → doing → done → todo (single event)', st1 === 'doing' && st2 === 'done' && st3 === 'todo', JSON.stringify({ st1, st2, st3 }))
+    const blockCountAfter = await js(`Array.from(document.querySelectorAll('.eb')).filter((e) => e.textContent.includes('DotTest')).length`)
+    check('v1.11.1: status switch cycles todo → doing → done → todo (single event)', st1 === 'doing' && st2 === 'done' && st3 === 'todo', JSON.stringify({ st1, st2, st3 }))
+    check('v1.11.1: switching status NEVER vanishes the event (block stays in the grid)', blockCountBefore >= 1 && blockCountAfter === blockCountBefore, JSON.stringify({ blockCountBefore, blockCountAfter }))
     // recurring: one click creates a ONE-OFF override (parent untouched)
-    await clickDot('DotRecur')
+    await clickSwitch('DotRecur')
     const recur = await js(`window.api.events.list().then((es) => ({
       master: es.find((e) => e.title === 'DotRecur' && !e.parentId)?.status ?? '',
       override: es.find((e) => e.title === 'DotRecur' && e.parentId)?.status ?? null,
       overrideOrigin: es.find((e) => e.title === 'DotRecur' && e.parentId)?.originDate ?? null
     }))`)
-    check('v1.11: recurring dot click → THIS occurrence only (override created, master untouched)', recur.master === 'todo' && recur.override === 'doing' && recur.overrideOrigin === TODAY, JSON.stringify(recur))
-    // cancelled: dot is inert
-    await clickDot('DotCanc')
+    check('v1.11.1: recurring switch → THIS occurrence only (override created, master untouched)', recur.master === 'todo' && recur.override === 'doing' && recur.overrideOrigin === TODAY, JSON.stringify(recur))
+    // cancelled: no switch at all
+    const cancBlock = await js(`(() => { const eb = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('DotCanc')); return eb ? { hasSwitch: !!eb.querySelector('.eb-switch') } : null })()`)
     const canc = await js(`window.api.events.list().then((es) => es.find((e) => e.title === 'DotCanc')?.status ?? '')`)
-    check('v1.11: cancelled dot is NOT clickable', canc === 'cancelled', canc)
+    check('v1.11.1: cancelled blocks have NO switch (edit dialog only)', canc === 'cancelled' && cancBlock && !cancBlock.hasSwitch, JSON.stringify({ canc, cancBlock }))
+
+    // v1.11.5: THE CRITICAL FIX — switching status on a LATER occurrence of a
+    // series (not the first day) must keep the override on THAT day, and the
+    // other days of the series must keep showing (previously the override was
+    // built with the master's startLocal → rendered on the master's day and
+    // the clicked day VANISHED).
+    dbRun("DELETE FROM events WHERE title LIKE 'DotLater%'")
+    await js(`window.api.events.create({ title: 'DotLater', description: '', startLocal: '${TODAY}T09:00', endLocal: '${TODAY}T10:00', allDay: false, labelId: null, colorOverride: null, status: 'todo', rrule: 'FREQ=DAILY', exdates: '[]' })`)
+    await js(`window.__rhythmData.load()`)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(500)
+    // TOMORROW is in the same Mon–Sun week (Thu → Fri): click the switch on
+    // TOMORROW's column block specifically (NOT the first block found)
+    const laterClicked = await js(`(() => {
+      const col = document.querySelector('.day-col[data-day="${TOMORROW}"]')
+      const eb = col ? Array.from(col.querySelectorAll('.eb')).find((e) => e.textContent.includes('DotLater')) : null
+      const sw = eb && eb.querySelector('.eb-switch')
+      if (sw) sw.click()
+      return !!sw
+    })()`)
+    await sleep(800)
+    const later = await js(`(async () => {
+      const es = await window.api.events.list()
+      const master = es.find((e) => e.title === 'DotLater' && !e.parentId)
+      const ov = es.find((e) => e.title === 'DotLater' && e.parentId)
+      // how many days of the series render in the visible week?
+      const blocks = Array.from(document.querySelectorAll('.day-col')).map((c, i) => ({
+        day: c.getAttribute('data-day'),
+        has: Array.from(c.querySelectorAll('.eb')).some((e) => e.textContent.includes('DotLater'))
+      }))
+      return {
+        masterStatus: master?.status ?? '',
+        overrideStatus: ov?.status ?? null,
+        overrideOrigin: ov?.originDate ?? null,
+        overrideStartDay: ov?.startLocal.slice(0, 10) ?? '',
+        blocks
+      }
+    })()`)
+    check('v1.11.5: later-occurrence switch → override on THAT day (not the master day)', laterClicked && later.overrideStatus === 'doing' && later.overrideStartDay === TOMORROW && later.overrideOrigin === TOMORROW, JSON.stringify(later))
+    check('v1.11.5: series still renders — the clicked day shows the override, no vanish', later.blocks.filter((b) => b.has).length >= 2, JSON.stringify(later.blocks.filter((b) => b.has)))
+    dbRun("DELETE FROM events WHERE title LIKE 'DotLater%'")
+    await js(`document.querySelector('.today-btn')?.click()`)
+    await sleep(400)
+    // v1.11.3: the passive DOT is fully inert — clicking it must NOT open the
+    // editor and must NOT change the status
+    await js(`(() => { const eb = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('DotTest')); const dot = eb && eb.querySelector('.eb-dot'); if (dot) dot.click(); return !!dot })()`)
+    await sleep(500)
+    const dotInert = await js(`({
+      editorOpen: !!document.querySelector('.editor'),
+      status: window.__rhythmData ? 'n/a' : ''
+    })`)
+    const dotStatus = await js(`window.api.events.list().then((es) => es.find((e) => e.title === 'DotTest')?.status ?? '')`)
+    check('v1.11.3: clicking the passive dot opens NO editor and changes NO status', !dotInert.editorOpen && dotStatus === 'todo', JSON.stringify({ editorOpen: dotInert.editorOpen, dotStatus }))
+    // v1.11.3: with a status filter active, switching STILL never vanishes the
+    // event — the filter auto-switches to All + a toast explains
+    await js(`Array.from(document.querySelectorAll('.status-pills .pill')).find((b) => b.textContent.includes('To Do'))?.click()`)
+    await sleep(300)
+    await clickSwitch('DotTest')
+    await sleep(700)
+    const filterAfter = await js(`(() => {
+      const active = document.querySelector('.status-pills .pill.active')
+      const stillThere = Array.from(document.querySelectorAll('.eb')).some((e) => e.textContent.includes('DotTest'))
+      const toast = Array.from(document.querySelectorAll('.toast')).some((x) => x.textContent.includes('filter switched to All'))
+      return { filter: active ? active.textContent.trim() : '', stillThere, toast }
+    })()`)
+    check('v1.11.3: filter auto-switches to All so the event never vanishes', filterAfter.filter.includes('All') && filterAfter.stillThere && filterAfter.toast, JSON.stringify(filterAfter))
+    await js(`Array.from(document.querySelectorAll('.status-pills .pill')).find((b) => b.textContent.includes('All'))?.click()`)
+    await sleep(300)
     dbRun("DELETE FROM events WHERE title LIKE 'DotTest%' OR title LIKE 'DotRecur%' OR title LIKE 'DotCanc%'")
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(500)
@@ -3599,11 +3770,25 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`document.querySelector('.settings-btn')?.click()`)
     await sleep(500)
     const setTabs = await js(`Array.from(document.querySelectorAll('.set-tab')).map((t) => t.textContent.trim())`)
-    check('v1.11: settings has General / Notifications / About tabs', setTabs.join(',') === 'General,Notifications,About', JSON.stringify(setTabs))
+    check('v1.11.4: settings has General / Notifications / Shortcuts / About tabs', setTabs.join(',') === 'General,Notifications,Shortcuts,About', JSON.stringify(setTabs))
     await js(`Array.from(document.querySelectorAll('.set-tab')).find((t) => t.textContent.includes('Notifications'))?.click()`)
     await sleep(400)
     const notifCfg0 = await js(`window.api.notify.getConfig()`)
     const slotCount = Array.isArray(notifCfg0.slots) ? notifCfg0.slots.length : 0
+    const notifTest = await js(`window.api.notify.test()`)
+    check('v1.11.1: notify:test returns a result object (ok boolean)', typeof notifTest === 'object' && typeof notifTest.ok === 'boolean', JSON.stringify(notifTest))
+    // v1.11.3: the in-app broadcast must render a toast even when the OS
+    // notification fails/unsupported — reminders are ALWAYS visible
+    await sleep(400)
+    const inAppToast = await js(`(async () => {
+      for (let i = 0; i < 8; i++) {
+        const t = Array.from(document.querySelectorAll('.toast')).find((x) => x.textContent.includes('Test notification'))
+        if (t) return t.textContent.slice(0, 90)
+        await new Promise((r) => setTimeout(r, 300))
+      }
+      return ''
+    })()`)
+    check('v1.11.3: test notification also appears as an IN-APP toast (always visible)', inAppToast.includes('Test notification'), inAppToast)
     await js(`(() => { const inp = document.querySelector('.set-num[type=time]'); if (!inp) return false; const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(inp, '21:30'); inp.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
     await sleep(200)
     await js(`Array.from(document.querySelectorAll('.set-row .btn')).find((b) => b.textContent.includes('Add time'))?.click()`)
@@ -3646,19 +3831,22 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     })()`)
     check('v1.11: milestone claim → Undo restores coins (spend row removed)', msUndo.claimed.ok && msUndo.afterClaim === msUndo.before - 10 && msUndo.afterUndo === msUndo.before && msUndo.spends.length === 0, JSON.stringify(msUndo))
 
-    // (8) keyboard shortcuts + cheat sheet
+    // (8) keyboard shortcuts — W switches view; '?' opens Settings → Shortcuts
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Month').click()`)
     await sleep(400)
     await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', bubbles: true }))`)
     await sleep(500)
     const shortView = await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.classList.contains('active'))?.textContent.trim() ?? ''`)
     await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))`)
-    await sleep(400)
-    const sheetOpen = await js(`!!document.querySelector('.shortcut-sheet')`)
-    await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`)
+    await sleep(500)
+    const sTab = await js(`(() => ({
+      settingsOpen: !!document.querySelector('.settings-dialog'),
+      activeTab: document.querySelector('.set-tab.active')?.textContent.trim() ?? '',
+      rows: document.querySelectorAll('.settings-dialog .shortcut-row').length
+    }))()`)
+    await js(`Array.from(document.querySelectorAll('.settings-dialog .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Done')?.click()`)
     await sleep(300)
-    const sheetClosed = await js(`!document.querySelector('.shortcut-sheet')`)
-    check('v1.11: shortcuts — W switches to Week, ? opens the cheat sheet, Esc closes', shortView.includes('Week') && sheetOpen && sheetClosed, JSON.stringify({ shortView, sheetOpen, sheetClosed }))
+    check('v1.11.4: shortcuts — W switches to Week; ? opens Settings → Shortcuts tab (no main-screen sheet)', shortView.includes('Week') && sTab.settingsOpen && sTab.activeTab === 'Shortcuts' && sTab.rows >= 6, JSON.stringify({ shortView, sTab }))
 
     // (9) heatmap popover closes on outside click
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Insights')).click()`)
@@ -3681,6 +3869,46 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`Array.from(document.querySelectorAll('.set-row .seg-btn')).find((b) => b.textContent.includes('12-hour'))?.click()`)
     await sleep(400)
     const hourLabel12 = await js(`Array.from(document.querySelectorAll('.hour-label')).map((e) => e.textContent.trim()).filter((t) => t.includes('AM') || t.includes('PM')).length`)
+    // v1.11.1: the CREATE widget must honour 12/24h too — open quick-add in 12h
+    await js(`document.querySelector('.new-btn')?.click()`)
+    await sleep(400)
+    const qa12 = await js(`(() => {
+      const wrap = document.querySelectorAll('.quickadd .ef-dt')[0]
+      const dateEl = wrap ? wrap.querySelector('.ef-date') : null
+      const hSel = wrap ? wrap.querySelector('.ef-time-h') : null
+      const ap = wrap ? wrap.querySelector('.ef-ampm') : null
+      return {
+        ampm: document.querySelectorAll('.quickadd .ef-ampm').length,
+        timeInputs: document.querySelectorAll('.quickadd .ef-time').length,
+        hSel: document.querySelectorAll('.quickadd .ef-time-h').length,
+        disp: wrap ? getComputedStyle(wrap).display : '',
+        sameRow: dateEl && hSel && ap
+          ? (() => {
+              const c = (el) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2 }
+              return Math.abs(c(dateEl) - c(ap)) < 2 && Math.abs(c(hSel) - c(ap)) < 2
+            })()
+          : false,
+        // v1.11.5: Start/End must wrap into TWO ROWS (12h) with no overflow
+        fields: (() => {
+          const qa = document.querySelector('.quickadd')
+          const f = Array.from(document.querySelectorAll('.quickadd .ef-times .ef-label'))
+          if (f.length < 2) return { ok: false }
+          const t0 = f[0].getBoundingClientRect().top
+          const t1 = f[1].getBoundingClientRect().top
+          return {
+            ok: true,
+            twoRows: Math.abs(t1 - t0) > 20,
+            overflow: qa ? qa.scrollWidth > qa.clientWidth + 1 : false
+          }
+        })()
+      }
+    })()`)
+    check('v1.11.1: quick-add shows AM/PM controls in 12h mode (no 24h time inputs)', qa12.ampm === 2 && qa12.timeInputs === 0 && qa12.hSel === 2, JSON.stringify(qa12))
+    check('v1.11.3: the 12h widget is ONE ROW (flex, AM/PM on the same line as the date)', qa12.disp.includes('flex') && qa12.sameRow, JSON.stringify(qa12))
+    check('v1.11.5: in 12h the Start/End fields stack in two rows with NO overflow', qa12.fields.ok && qa12.fields.twoRows && !qa12.fields.overflow, JSON.stringify(qa12.fields))
+    // close quick-add via its own Cancel (the settings dialog stays open)
+    await js(`Array.from(document.querySelectorAll('.quickadd .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Cancel')?.click()`)
+    await sleep(300)
     await js(`Array.from(document.querySelectorAll('.set-row .seg-btn')).find((b) => b.textContent.includes('24-hour'))?.click()`)
     await sleep(400)
     await js(`Array.from(document.querySelectorAll('.set-row .seg-btn')).find((b) => b.textContent.trim() === 'Sunday')?.click()`)
@@ -3688,14 +3916,14 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     const firstDow = await js(`document.querySelector('.week-day-head .wd-name')?.textContent.trim() ?? ''`)
     await js(`Array.from(document.querySelectorAll('.set-row .seg-btn')).find((b) => b.textContent.trim() === 'Monday')?.click()`)
     await sleep(500)
-    await js(`(() => { const inp = Array.from(document.querySelectorAll('.set-num')).find((i) => i.getAttribute('aria-label') === 'Day starts at hour'); if (!inp) return false; const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(inp, '8'); inp.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
+    await js(`(() => { const sel = document.querySelector('select[aria-label="Day starts at hour"]'); if (!sel) return false; const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set; setter.call(sel, '8'); sel.dispatchEvent(new Event('change', { bubbles: true })); return true })()`)
     await sleep(600)
     const scrollTop8 = await js(`(() => {
       const el = document.querySelector('.week-body')
       if (!el) return { top: -1, max: -1 }
       return { top: el.scrollTop, max: el.scrollHeight - el.clientHeight }
     })()`)
-    await js(`(() => { const inp = Array.from(document.querySelectorAll('.set-num')).find((i) => i.getAttribute('aria-label') === 'Day starts at hour'); if (!inp) return false; const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(inp, '0'); inp.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
+    await js(`(() => { const sel = document.querySelector('select[aria-label="Day starts at hour"]'); if (!sel) return false; const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set; setter.call(sel, '0'); sel.dispatchEvent(new Event('change', { bubbles: true })); return true })()`)
     await sleep(400)
     await js(`Array.from(document.querySelectorAll('.dialog-actions .btn')).find((b) => b.textContent.trim() === 'Done')?.click()`)
     await sleep(400)
@@ -3714,10 +3942,15 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`(() => { const col = document.querySelector('.day-col'); if (!col) return false; const r = col.getBoundingClientRect(); col.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + 100 })); return true })()`)
     await sleep(600)
     const durAdd = await js(`(() => {
-      const inputs = Array.from(document.querySelectorAll('.quickadd input[type=datetime-local]'))
+      const inputs = Array.from(document.querySelectorAll('.quickadd .ef-dt'))
       if (inputs.length < 2) return { ok: false }
-      const s = new Date(inputs[0].value)
-      const e = new Date(inputs[1].value)
+      const d0 = inputs[0].querySelector('.ef-date')?.value ?? ''
+      const t0 = inputs[0].querySelector('.ef-time')?.value ?? ''
+      const d1i = inputs[1].querySelector('.ef-date')?.value ?? ''
+      const t1i = inputs[1].querySelector('.ef-time')?.value ?? ''
+      if (!d0 || !t0 || !d1i || !t1i) return { ok: false }
+      const s = new Date(d0 + 'T' + t0)
+      const e = new Date(d1i + 'T' + t1i)
       return { ok: true, mins: (e.getTime() - s.getTime()) / 60000 }
     })()`)
     await js(`(() => { const b = Array.from(document.querySelectorAll('.quickadd .dialog-actions .btn')).find((x) => x.textContent.includes('Cancel') || x.textContent.includes('close')); if (b) b.click(); return !!b })()`)
@@ -3729,7 +3962,87 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
     await js(`window.api.settings.set('defaultDuration', '60')`)
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
     await sleep(400)
+    // v1.11.1: the week-start setting also applies to the SIDEBAR mini-month
+    // and the STREAK calendar (headers + grid alignment)
+    await js(`window.api.settings.set('weekStart', 'sunday')`)
+    await js(`window.__rhythmPrefs.load()`)
+    await sleep(500)
+    const wsMini = await js(`Array.from(document.querySelectorAll('.minimonth-head span')).map((s2) => s2.textContent).join('')`)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins')).click()`)
+    await js(`(() => { const d = document.querySelector('.coin-drop'); if (d) d.click() })()`)
+    await sleep(900)
+    const wsStreak = await js(`(() => ({
+      head: Array.from(document.querySelectorAll('.streak-month-week span')).map((s2) => s2.textContent).join(''),
+      firstRow: Array.from(document.querySelectorAll('.streak-row'))[0]?.querySelector('.streak-day')?.textContent ?? ''
+    }))()`)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    await js(`window.api.settings.set('weekStart', 'monday')`)
+    await js(`window.__rhythmPrefs.load()`)
+    await sleep(400)
+    check('v1.11.1: sidebar mini-month header follows the week-start setting', wsMini === 'SMTWTFS', wsMini)
+    // v1.11.4: the STREAK calendar is ALWAYS Monday–Sunday (no week-start setting)
+    check('v1.11.4: streak calendar stays Monday-first even with Sunday setting', wsStreak.head === 'MTWTFSS', JSON.stringify(wsStreak))
 
+
+    // v1.11.4: PERFECT WEEK is ALWAYS Monday–Sunday (the streak calendar is
+    // Monday-only) — a perfect Mon–Sun week pays +100 once, whatever the
+    // week-start setting, and never double-pays.
+    dbRun("DELETE FROM events")
+    dbRun("DELETE FROM settings WHERE key LIKE 'streakAward.%'")
+    const pwAdd = (iso: string) => dbRun(
+      `INSERT INTO events (id, title, description, start_local, end_local, all_day, label_id, color_override, status, rrule, exdates, parent_id, origin_date, completed_at, created_at, updated_at)
+       VALUES (?, 'PW', '', ?, ?, 0, NULL, NULL, 'done', NULL, '[]', NULL, NULL, ?, ?, ?)`,
+      'pw-' + iso, iso + 'T09:00', iso + 'T10:00', new Date().toISOString(), new Date().toISOString(), new Date().toISOString()
+    )
+    const keyOf = (iso: string) => js(`window.api.settings.get('streakAward.${iso}')`)
+    // perfect Mon–Sun week 2026-08-03..09
+    for (const iso of ['2026-08-03','2026-08-04','2026-08-05','2026-08-06','2026-08-07','2026-08-08','2026-08-09']) pwAdd(iso)
+    await js(`window.api.settings.set('weekStart', 'monday')`)
+    await js(`window.__rhythmPrefs.load()`)
+    await sleep(400)
+    const pwMon = await js(`window.api.coins.perfectWeek()`)
+    const pwKeyMon = await keyOf('2026-08-03')
+    // switch to Sunday weeks → the same Monday week must NOT pay again
+    await js(`window.api.settings.set('weekStart', 'sunday')`)
+    await js(`window.__rhythmPrefs.load()`)
+    await sleep(400)
+    const pwSun = await js(`window.api.coins.perfectWeek()`)
+    const pwTxCount = await js(`window.api.coins.listTransactions().then((txs) => txs.filter((t) => t.reason === 'Perfect week').length)`)
+    check('v1.11.4: perfect week is Monday–Sunday (key 08-03) and pays once', pwMon.award && pwMon.weekKey === '2026-08-03' && pwKeyMon === '1', JSON.stringify({ pwMon, keyMon: pwKeyMon }))
+    check('v1.11.4: week-start setting does NOT change or double-pay the perfect week', !pwSun.award, JSON.stringify({ pwSun, tx: pwTxCount }))
+    dbRun("DELETE FROM events")
+    dbRun("DELETE FROM settings WHERE key LIKE 'streakAward.%'")
+
+    // v1.11.3: clicking the grid maps to the REAL clock time even when the
+    // grid is scrolled ("day starts at" setting)
+    await js(`window.api.settings.set('dayStartHour', '8')`)
+    await js(`window.__rhythmPrefs.load()`)
+    await sleep(500)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(500)
+    const clickPos = await js(`(() => {
+      const body = document.querySelector('.week-body')
+      if (!body) return null
+      const r = body.getBoundingClientRect()
+      const head = body.querySelector('.week-head')
+      const headH = head ? head.getBoundingClientRect().height : 0
+      const col = body.querySelector('.day-col')
+      const cr = col ? col.getBoundingClientRect() : r
+      return { x: Math.round(cr.left + cr.width / 2), y: Math.round(r.top + headH + 6), scrollTop: body.scrollTop }
+    })()`)
+    await js(`(() => { const el = document.elementFromPoint(${clickPos ? clickPos.x : 0}, ${clickPos ? clickPos.y : 0}); const col = el && el.closest('.day-col'); if (col) col.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: ${clickPos ? clickPos.x : 0}, clientY: ${clickPos ? clickPos.y : 0} })); return !!col })()`)
+    await sleep(600)
+    const clickStart = await getDT('.quickadd', 0)
+    const clickMin = clickStart && clickStart.length >= 16 ? parseInt(clickStart.slice(11, 13), 10) * 60 + parseInt(clickStart.slice(14, 16), 10) : -1
+    // expected real time at the click point: (6px below the sticky header + scrollTop) / PX_PER_MIN, snapped to 15
+    const expectedMin = clickPos ? Math.round(((6 + clickPos.scrollTop) / 0.55) / 15) * 15 : -1
+    await js(`Array.from(document.querySelectorAll('.quickadd .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Cancel')?.click()`)
+    await sleep(300)
+    await js(`window.api.settings.set('dayStartHour', '0')`)
+    await js(`window.__rhythmPrefs.load()`)
+    await sleep(400)
+    check('v1.11.3: clicking the grid maps to the REAL clock time under scroll (was 00:00 before)', clickPos !== null && expectedMin > 100 && clickMin >= 0 && Math.abs(clickMin - expectedMin) <= 15, JSON.stringify({ scrollTop: clickPos && clickPos.scrollTop, clickStart, expectedMin }))
 
     // (11) accessibility: aria-labels on icon buttons + focus-visible outline
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
@@ -3738,9 +4051,9 @@ export async function runSmoke(win: BrowserWindow, outPath: string): Promise<voi
       settings: document.querySelector('.settings-btn')?.getAttribute('aria-label') ?? '',
       prev: Array.from(document.querySelectorAll('.icon-btn')).find((b) => b.getAttribute('aria-label') === 'Previous') ? true : false,
       next: Array.from(document.querySelectorAll('.icon-btn')).find((b) => b.getAttribute('aria-label') === 'Next') ? true : false,
-      shortcuts: document.querySelector('.shortcuts-btn')?.getAttribute('aria-label') ?? ''
+      shortcutsBtn: !!document.querySelector('.shortcuts-btn')
     }))()`)
-    check('v1.11: icon buttons carry aria-labels (settings/prev/next/shortcuts)', a11y.settings === 'Settings' && a11y.prev && a11y.next && a11y.shortcuts === 'Keyboard shortcuts', JSON.stringify(a11y))
+    check('v1.11.4: icon buttons carry aria-labels; no clutter shortcut button on the main screen', a11y.settings === 'Settings' && a11y.prev && a11y.next && !a11y.shortcutsBtn, JSON.stringify(a11y))
 
     // v1.10.6: the ledger renders EVERY transaction — no 20-row cap in the UI,
     // no LIMIT in the IPC (by this point the suite has dozens of entries)

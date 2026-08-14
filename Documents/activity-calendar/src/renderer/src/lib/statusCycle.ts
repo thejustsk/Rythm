@@ -6,8 +6,9 @@
  */
 import type { CalendarEvent, EventInput, EventStatus } from '@shared/types'
 import type { Occurrence } from '@/engine/occurrences'
-import { useData } from '@/state/store'
+import { useData, useUi } from '@/state/store'
 import { useCoins } from '@/state/coins'
+import { useToasts } from '@/state/toasts'
 
 /** Pure cycle: todo → doing → done → todo. Cancelled stays cancelled. */
 export function nextStatus(s: EventStatus): EventStatus {
@@ -46,14 +47,21 @@ export async function cycleOccurrenceStatus(occ: Occurrence): Promise<EventStatu
   if (row.kind === 'override') {
     saved = await data.updateEvent(ev.id, { status: next })
   } else if (row.kind === 'master') {
-    // recurring series → one-off override row (this occurrence only)
+    // recurring series → one-off override row (this occurrence only).
+    // v1.11.5 CRITICAL: the override must carry the OCCURRENCE's real
+    // date+time — using the master's startLocal made later occurrences
+    // render on the master's start day (and the clicked day vanished).
     const base = row.master
+    const loc = (d: Date) => {
+      const p = (n: number) => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+    }
     saved = await data.applyOverride(
       {
         title: base.title,
         description: base.description,
-        startLocal: base.startLocal,
-        endLocal: base.endLocal,
+        startLocal: loc(occ.start),
+        endLocal: loc(occ.end),
         allDay: base.allDay,
         labelId: base.labelId,
         colorOverride: base.colorOverride,
@@ -82,6 +90,19 @@ export async function cycleOccurrenceStatus(occ: Occurrence): Promise<EventStatu
       coins.setPending({ event: saved, originDate: occ.originDate })
     }
   }
-  await data.load()
+
+  // 3) v1.11.3: the event must NEVER vanish — if the active status filter
+  //    would hide the new status, switch the filter to All automatically
+  //    (with a toast explaining) so the block stays visible.
+  const ui = useUi.getState()
+  if (ui.statusFilter !== 'all' && ui.statusFilter !== next) {
+    const label = ui.statusFilter === 'todo' ? 'To Do' : ui.statusFilter === 'doing' ? 'In Progress' : ui.statusFilter === 'done' ? 'Done' : 'Cancelled'
+    useToasts.getState().push({
+      message: `Status changed to ${next} — the "${label}" filter was hiding it, so the filter switched to All.`,
+      kind: 'info',
+      duration: 4500
+    })
+    ui.setStatusFilter('all')
+  }
   return next
 }

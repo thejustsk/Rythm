@@ -15,6 +15,18 @@
 import { useUi } from '@/state/store'
 import { useData } from '@/state/store'
 
+/** The shortcut list — shared by the Settings → Shortcuts tab (v1.11.4). */
+export const SHORTCUT_ROWS: Array<{ keys: string[]; label: string }> = [
+  { keys: ['D', 'W', 'M', 'A'], label: 'Switch view (Day / Week / Month / Agenda)' },
+  { keys: ['I'], label: 'Open Insights' },
+  { keys: ['C'], label: 'Quick-add a new activity' },
+  { keys: ['T'], label: 'Jump to today' },
+  { keys: ['←', '→'], label: 'Previous / next day' },
+  { keys: ['Shift', '←', '→'], label: 'Previous / next week' },
+  { keys: ['?'], label: 'Open Settings → Shortcuts' },
+  { keys: ['Esc'], label: 'Close dialogs' }
+]
+
 type View = 'day' | 'week' | 'month' | 'agenda' | 'insights' | 'coins'
 
 const VIEW_KEYS: Record<string, View> = {
@@ -42,14 +54,11 @@ export function installShortcuts(): () => void {
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key
 
     if (key === 'Escape') {
-      if (ui.shortcutsOpen) {
-        ui.closeShortcuts()
-        e.preventDefault()
-      }
+      // Esc already closes dialogs via their own handlers; nothing extra here
       return
     }
     if (key === '?') {
-      ui.toggleShortcuts()
+      ui.openSettings('shortcuts')
       e.preventDefault()
       return
     }

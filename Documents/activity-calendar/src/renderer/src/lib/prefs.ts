@@ -44,6 +44,13 @@ export async function loadPrefs(): Promise<Prefs> {
   return prefs
 }
 
+// Test hook for the automated smoke suite — harmless in production.
+if (typeof window !== 'undefined') {
+  ;(window as unknown as { __rhythmPrefs: { load: () => Promise<Prefs> } }).__rhythmPrefs = {
+    load: () => loadPrefs()
+  }
+}
+
 /** Persist one pref (settings row + live store). */
 export async function setPref(key: keyof Prefs, value: string | number | boolean): Promise<void> {
   // booleans are stored as '1'/'0' — the loader checks !== '0', so a literal

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { iso, useUi } from '@/state/store'
 import { addDays, startOfDay, daysInMonth } from '@/engine/recurrence'
-import { weekStartOf, type WeekStart } from '@/lib/dates'
+import { weekStartOf, weekDayNames, type WeekStart } from '@/lib/dates'
 
 interface Props {
   cursor: Date
@@ -93,8 +93,8 @@ export default function MiniMonth({ cursor, onChange }: Props) {
       )}
 
       <div className="minimonth-head">
-        {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
-          <span key={i}>{d}</span>
+        {weekDayNames(weekStart).map((d) => (
+          <span key={d}>{d[0]}</span>
         ))}
       </div>
       <div className="minimonth-grid">

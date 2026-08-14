@@ -7,9 +7,10 @@
  * Config lives in settings (notifEnabled / notifSlots / notifLead) and is
  * editable in Settings → Notifications.
  */
-import { ipcMain, Notification } from 'electron'
+import { ipcMain, Notification, BrowserWindow } from 'electron'
 import type { Db } from './db/connection'
 import { parseRRule, iterateRule, isoDate } from '../renderer/src/engine/recurrence'
+import { morningSummary, slotReminder, startupReminder } from './notifyCore'
 
 export interface NotifyConfig {
   enabled: boolean
@@ -21,7 +22,6 @@ export interface NotifyConfig {
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
 const localDate = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
-const hhmm = (d: Date) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 
 export function readConfig(db: Db): NotifyConfig {
   const get = (k: string) => (db.prepare('SELECT value FROM settings WHERE key = ?').get(k) as any)?.value
@@ -47,13 +47,33 @@ export function writeConfig(db: Db, cfg: NotifyConfig): void {
   set.run('notifLead', String(Math.min(240, Math.max(0, cfg.leadMin))))
 }
 
-function show(title: string, body: string): boolean {
-  if (!Notification.isSupported()) return false
+/** v1.11.2: ALWAYS surface a reminder inside the app too — even if Windows
+ *  blocks or lacks OS toasts, the user still sees it. */
+function broadcastInApp(title: string, body: string): void {
   try {
-    new Notification({ title, body, silent: false }).show()
-    return true
-  } catch {
-    return false
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('notify:inapp', { title, body })
+    }
+  } catch (e) {
+    console.log('[notify] in-app broadcast failed:', e)
+  }
+}
+
+function show(title: string, body: string): { ok: boolean; reason: string } {
+  broadcastInApp(title, body) // guaranteed visible, OS result is a bonus
+  if (!Notification.isSupported()) {
+    console.log('[notify] NOT supported on this system (in-app toast still shown)')
+    return { ok: false, reason: 'unsupported' }
+  }
+  try {
+    const n = new Notification({ title, body, silent: false })
+    n.on('failed', (_e, error) => console.log('[notify] show failed:', error))
+    n.on('click', () => console.log('[notify] clicked'))
+    n.show()
+    return { ok: true, reason: 'shown' }
+  } catch (e) {
+    console.log('[notify] error:', e)
+    return { ok: false, reason: String(e) }
   }
 }
 
@@ -96,6 +116,14 @@ function occsOnDay(db: Db, dayIso: string): Array<{ id: string; title: string; s
 let timer: NodeJS.Timeout | null = null
 /** Slots already fired today (in-memory; settings persist the day flag). */
 const firedToday = new Set<string>()
+/** Startup near-event reminder fires once per app launch. */
+let startupChecked = false
+
+/** v1.11.3: events are read with their real start times (title + start +
+ *  status) so the pure decision logic (notifyCore) can pick the due ones. */
+function occsForNotify(db: Db, dayIso: string): Array<{ title: string; start: Date; status: string }> {
+  return occsOnDay(db, dayIso).map((o) => ({ title: o.title, start: o.start, status: o.status }))
+}
 
 function runCheck(db: Db): void {
   const cfg = readConfig(db)
@@ -104,20 +132,25 @@ function runCheck(db: Db): void {
   const set = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
 
   if (cfg.enabled) {
-    // ---- once per day: the morning summary (first time the PC is on) ----
+    const occs = occsForNotify(db, today)
+
+    // ---- 1) once per day: the morning summary (first time the PC is on) ----
     const dayKey = 'notifDay.' + today
     const done = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(dayKey)
     if (!done) {
-      const occs = occsOnDay(db, today)
-      const active = occs.filter((o) => o.status !== 'done' && o.status !== 'cancelled')
-      if (active.length > 0) {
-        const n = active.length
-        show('Rhythm — Good morning ☀️', `You have ${n} activit${n === 1 ? 'y' : 'ies'} planned today.`)
-      }
+      const r = morningSummary(occs)
+      if (r) show(r.title, r.body)
       set.run(dayKey, '1')
     }
 
-    // ---- time-slot reminders: events starting within the lead window ----
+    // ---- 3) once per launch: event starting within the lead time ----
+    if (!startupChecked) {
+      startupChecked = true
+      const r = startupReminder(occs, now, cfg.leadMin)
+      if (r) show(r.title, r.body)
+    }
+
+    // ---- 2) slot reminders: events starting within 2h after each slot ----
     for (const slot of cfg.slots) {
       if (firedToday.has(slot)) continue
       const [sh, sm] = slot.split(':').map(Number)
@@ -125,23 +158,9 @@ function runCheck(db: Db): void {
       const nowMin = now.getHours() * 60 + now.getMinutes()
       if (nowMin < slotMin) continue
       firedToday.add(slot)
-      // events starting in (now, now + leadMin]
-      const leadMs = cfg.leadMin * 60000
-      const upcoming = occsOnDay(db, today)
-        .filter((o) => {
-          const t = o.start.getTime()
-          return t > now.getTime() && t <= now.getTime() + leadMs && o.status !== 'done' && o.status !== 'cancelled'
-        })
-        .sort((a, b) => a.start.getTime() - b.start.getTime())
-      if (upcoming.length > 0) {
-        const first = upcoming[0]
-        const mins = Math.max(1, Math.round((first.start.getTime() - now.getTime()) / 60000))
-        const body =
-          upcoming.length === 1
-            ? `${first.title} — ${hhmm(first.start)} (in ${mins} min)`
-            : `${first.title} and ${upcoming.length - 1} more — first at ${hhmm(first.start)} (in ${mins} min)`
-        show('Rhythm — Upcoming', body)
-      }
+      const slotTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), sh, sm)
+      const r = slotReminder(occs, now, slotTime)
+      if (r) show(r.title, r.body)
     }
   }
 }
@@ -149,6 +168,8 @@ function runCheck(db: Db): void {
 /** Start (or restart) the notifier. Safe to call on every app start. */
 export function startNotifier(db: Db): void {
   if (timer) clearInterval(timer)
+  const cfg = readConfig(db)
+  console.log('[notify] enabled=', cfg.enabled, 'slots=', JSON.stringify(cfg.slots), 'leadMin=', cfg.leadMin)
   runCheck(db) // immediate check (covers the "first time PC on" case)
   timer = setInterval(() => runCheck(db), 30000)
 }
@@ -160,8 +181,10 @@ export function registerNotificationHandlers(db: Db): void {
     return readConfig(db)
   })
   ipcMain.handle('notify:test', () => {
-    const ok = show('Rhythm — Test notification', 'Notifications are working! 🎉')
-    return { ok }
+    console.log('[notify] test requested')
+    const res = show('Rhythm — Test notification', 'Notifications are working! 🎉')
+    console.log('[notify] test result:', JSON.stringify(res))
+    return res
   })
   ipcMain.handle('notify:resetDay', () => {
     // dev/testing helper: allows the morning summary to fire again today
