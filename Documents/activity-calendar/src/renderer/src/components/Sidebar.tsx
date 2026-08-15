@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useData, useUi, hiddenLabelIds } from '@/state/store'
-import { clickLabel, type Phase } from '@/lib/labelSelect'
+import { clickLabel, deriveParentPhase, type Phase } from '@/lib/labelSelect'
 import { useToasts } from '@/state/toasts'
 import { useCoins } from '@/state/coins'
 import { fmtCoins } from '@/lib/gamification'
@@ -57,8 +57,23 @@ export default function Sidebar() {
       if (!parent || !ui.labelPhases[parent.id]) return null // group inactive
       return hidden.has(l.id) ? null : 'green'
     }
-    return ui.labelPhases[l.id] ?? null
+    // parents: colour DERIVED from the real hidden set (never disagrees)
+    return ui.labelPhases[l.id] ? deriveParentPhase(labels, hidden, l.id) : null
   }
+  /** v1.11.8: badge text per colour — amber "only this", yellow "some
+   *   sub-tags", blue "children only", green "all sub-tags", lone "on". */
+  const badgeFor = (l: Label): string | null => {
+    if (l.parentId) return phaseFor(l) === 'green' ? 'on' : null
+    const phase = phaseFor(l)
+    if (!phase) return null
+    const kids = labels.filter((c) => c.parentId === l.id)
+    if (kids.length === 0) return 'on'
+    if (phase === 'amber') return 'only this'
+    if (phase === 'yellow') return 'some sub-tags'
+    if (phase === 'blue') return 'children only'
+    return 'all sub-tags'
+  }
+
   const glyphFor = (l: Label): 'tick' | 'plus' | null => {
     const phase = phaseFor(l)
     if (phase === 'green') return 'tick'
@@ -211,9 +226,16 @@ export default function Sidebar() {
             onBlur={() => void commitRename(l)}
           />
         ) : (
-          <span className="label-name" title="Double-click to rename" onDoubleClick={() => startRename(l)}>
-            {l.name}
-          </span>
+          <>
+            <span className="label-name" title="Double-click to rename" onDoubleClick={() => startRename(l)}>
+              {l.name}
+            </span>
+            {badgeFor(l) && (
+              <span className={`lb-badge ${badgeFor(l).replace(/ /g, '-')}`}>
+                {badgeFor(l)}
+              </span>
+            )}
+          </>
         )}
         <span className="label-actions">
           <button className="la-btn" title="Rename" onClick={(e) => { e.stopPropagation(); startRename(l) }}>
@@ -277,6 +299,7 @@ export default function Sidebar() {
       <div className="side-section grow">
         <div className="side-title-row">
           <div className="side-title">Labels</div>
+          <div className="labels-hint">Click: <b className="lh-amber">amber</b> only this · <b className="lh-yellow">yellow</b> this + some sub-tags · <b className="lh-blue">blue</b> sub-tags only · <b className="lh-green">green</b> all sub-tags · empty = off. Groups combine (multi-select).</div>
           {ui.hiddenLabels.size > 0 && (
             <button className="all-chip" onClick={() => ui.setHiddenLabels([])}>
               All

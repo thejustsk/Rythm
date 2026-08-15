@@ -283,9 +283,38 @@
 .lb-check.tick { opacity: 1; background: var(--green); border-color: var(--green); color: #fff; }
 .lb-check.plus { opacity: 1; background: var(--accent); border-color: var(--accent); color: #fff; }
 /* cup 3 label selection colours — saffron (#FF9933) / green / blue */
-.label-row.sel-saffron .lb-check { opacity: 1; background: #ff9933; border-color: #ff9933; color: #fff; }
-.label-row.sel-saffron .label-name { color: #d97706; font-weight: 600; }
+.label-row.sel-amber .lb-check { opacity: 1; background: #ff9933; border-color: #ff9933; color: #fff; }
+.label-row.sel-amber .label-name { color: #d97706; font-weight: 600; }
+.label-row.sel-yellow .lb-check { opacity: 1; background: #ffd60a; border-color: #ffd60a; color: #5b4b00; }
+.label-row.sel-yellow .label-name { color: #b58900; font-weight: 600; }
 .label-row.sel-green .lb-check { opacity: 1; background: var(--green); border-color: var(--green); color: #fff; }
+/* v1.11.6: filter-meaning badges on selected label rows */
+.lb-badge {
+  margin-left: auto;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  flex: none;
+}
+.lb-badge.only-this { background: rgba(255, 153, 51, 0.22); color: #ff9933; }
+.lb-badge.some-sub-tags { background: rgba(255, 214, 10, 0.22); color: #b58900; }
+.lb-badge.children-only { background: rgba(10, 132, 255, 0.2); color: var(--accent); }
+.lb-badge.all-sub-tags { background: rgba(52, 199, 89, 0.2); color: var(--green); }
+.lb-badge.on { background: rgba(52, 199, 89, 0.2); color: var(--green); }
+.labels-hint {
+  font-size: 10px;
+  color: var(--text-3);
+  line-height: 1.5;
+  padding: 0 6px;
+}
+.labels-hint b { font-weight: 700; }
+.lh-amber { color: #ff9933; }
+.lh-yellow { color: #d9b000; }
+.lh-blue { color: var(--accent); }
+.lh-green { color: var(--green); }
 .label-row.sel-blue .lb-check { opacity: 1; background: var(--accent); border-color: var(--accent); color: #fff; }
 .label-row.sel-blue .label-name { color: var(--accent); font-weight: 600; }
 .lb-check.tick svg,
@@ -793,11 +822,15 @@
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  overflow-x: hidden; /* blocks/columns can never spill sideways */
   scrollbar-gutter: stable; /* keeps the sticky header clear of the scrollbar (no corner bleed) */
   background: var(--surface);
-  border-radius: var(--radius);
+  border-radius: 0; /* v1.11.6: square edge (was rounded) — prevents corner bleed */
   box-shadow: var(--shadow-1);
 }
+/* keep the sticky header's top corners square to match (no inner radius) */
+.week-head { border-radius: 0; }
+
 /* sticky header lives inside the scroll container → always aligned with columns */
 .week-head {
   position: sticky;

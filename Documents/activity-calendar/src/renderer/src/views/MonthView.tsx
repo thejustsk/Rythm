@@ -1,5 +1,5 @@
 import { useMemo, useRef } from 'react'
-import { useData, useUi, iso } from '@/state/store'
+import { useData, useUi, iso, visibleLabelIds } from '@/state/store'
 import { computeOccurrences, occurrencesForDay } from '@/engine/occurrences'
 import { addDays, startOfDay } from '@/engine/recurrence'
 import EventBlock from '@/components/EventBlock'
@@ -28,8 +28,11 @@ export default function MonthView() {
 
   const filtered = useMemo(() => {
     const hidden = ui.hiddenLabels
+    const vis = visibleLabelIds(labels, hidden, ui.labelPhases)
     return occs.filter((o) => {
-      if (hidden.has(o.event.labelId ?? '')) return false
+      const lid = o.event.labelId ?? ''
+      if (lid && !vis.has(lid)) return false
+      if (!lid && hidden.size > 0) return false
       if (ui.statusFilter !== 'all' && o.event.status !== ui.statusFilter) return false
       if (!matchesSearch(o.event, labels, ui.search)) return false
       return true

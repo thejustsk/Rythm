@@ -1,23 +1,32 @@
 import type { Label } from '@shared/types'
 
 /**
- * Sidebar label selection (v3 — full independence).
+ * Sidebar label selection — the full colour state machine (user spec).
  *
- * A group NEVER touches another group: selecting/removing a parent or its
- * child only changes THAT group's own ids in the hidden set. Other groups'
- * children keep their exact selected state (visibility AND phase memory).
+ * PARENT colours (per group; groups are independent = multi-select):
+ *   (none)  – nothing in this group selected
+ *   amber   – parent only (its children hidden)
+ *   yellow  – parent + SOME (not all) children visible
+ *   blue    – children visible WITHOUT the parent (few or all)
+ *   green   – parent + ALL children visible
  *
- * Parent group cycles:
- *   EMPTY → SAFFRON (parent's own events only — its children hidden)
- *         → GREEN  (parent + ALL children shown)
- *         → EMPTY
- *   BLUE (children selected while parent hidden) → parent click → GREEN directly
- *   LONE parent (no children): EMPTY → GREEN → EMPTY — and neither click
- *   touches any other group.
- *   A selected child is always GREEN.
+ * PARENT click:
+ *   none → amber → green → none          (yellow → green)
+ *   blue → yellow (children kept + parent)   — green if ALL children visible
+ *
+ * CHILD click:
+ *   none → blue (that child only)
+ *   amber → yellow / green (child toggled on; green when all visible)
+ *   yellow → toggling keeps yellow/green/amber (derived from the real set)
+ *   blue → toggling keeps blue; last child off clears the group (→ none)
+ *   green → toggling off → yellow (some remain) / amber (none remain)
+ *
+ * The STORED phase decides which transition runs; the colour is then
+ * re-derived from the ACTUAL hidden set so it can never disagree with what
+ * is really selected. Lone parents (no children): none → green → none.
  */
 
-export type Phase = 'saffron' | 'green' | 'blue'
+export type Phase = 'amber' | 'yellow' | 'blue' | 'green'
 
 export interface LabelSelResult {
   hidden: Set<string>
@@ -26,6 +35,35 @@ export interface LabelSelResult {
 
 function childrenOf(labels: Label[], parentId: string): Label[] {
   return labels.filter((l) => l.parentId === parentId)
+}
+
+/** The colour a parent group SHOULD show, derived from the real hidden set. */
+export function deriveParentPhase(
+  labels: Label[],
+  hidden: Set<string>,
+  parentId: string
+): Phase | null {
+  const kids = childrenOf(labels, parentId)
+  if (kids.length === 0) {
+    // lone parent: selected (not hidden) → green, else none
+    return hidden.has(parentId) ? null : 'green'
+  }
+  const parentHidden = hidden.has(parentId)
+  const visKids = kids.filter((k) => !hidden.has(k.id))
+  if (parentHidden) return visKids.length > 0 ? 'blue' : null
+  if (visKids.length === 0) return 'amber'
+  return visKids.length === kids.length ? 'green' : 'yellow'
+}
+
+/** Remove a whole group from the selection (deselect). */
+function clearGroup(
+  nextH: Set<string>,
+  nextP: Record<string, Phase>,
+  groupIds: string[],
+  parentId: string
+): void {
+  for (const id of groupIds) nextH.delete(id)
+  delete nextP[parentId]
 }
 
 /** Click a label row → next selection state. Pure & unit-tested. */
@@ -40,71 +78,65 @@ export function clickLabel(
   const nextH = new Set(hidden)
   const nextP: Record<string, Phase> = { ...phases }
 
-  const kidsOf = (p: Label) => childrenOf(labels, p.id)
-  const groupIds = (p: Label) => [p.id, ...kidsOf(p).map((k) => k.id)]
-
   if (l.parentId) {
+    // ================= CHILD click =================
     const parent = labels.find((p) => p.id === l.parentId)!
-    const phase = nextP[parent.id]
-    const kids = kidsOf(parent)
+    const kids = childrenOf(labels, parent.id)
+    const cur = nextP[parent.id] // undefined = group off
 
-    if (!phase) {
-      // EMPTY → solo-select this child WITHIN its group only: parent hidden
-      // (BLUE) + siblings hidden; other groups untouched
-      groupIds(parent).forEach((gid) => nextH.add(gid))
+    if (!cur) {
+      // none → blue: parent + siblings hidden, this child visible
+      kids.forEach((k) => nextH.add(k.id))
+      nextH.add(parent.id)
       nextH.delete(l.id)
       nextP[parent.id] = 'blue'
-    } else if (phase === 'blue') {
-      if (nextH.has(l.id)) nextH.delete(l.id)
-      else nextH.add(l.id)
-      if (kids.every((k) => nextH.has(k.id))) {
-        groupIds(parent).forEach((gid) => nextH.delete(gid))
-        delete nextP[parent.id]
-      }
-    } else if (phase === 'saffron') {
-      if (nextH.has(l.id)) nextH.delete(l.id)
-      else nextH.add(l.id)
-      if (kids.every((k) => !nextH.has(k.id))) nextP[parent.id] = 'green'
     } else {
-      nextH.add(l.id)
-      nextP[parent.id] = 'saffron'
+      // toggle this child
+      if (nextH.has(l.id)) nextH.delete(l.id)
+      else nextH.add(l.id)
+      // blue + last child deselected → the whole group is off
+      if (nextH.has(parent.id) && kids.every((k) => nextH.has(k.id))) {
+        clearGroup(nextH, nextP, [parent.id, ...kids.map((k) => k.id)], parent.id)
+        return { hidden: nextH, phases: nextP }
+      }
+      // re-derive the group colour from the real set
+      const d = deriveParentPhase(labels, nextH, parent.id)
+      if (d) nextP[parent.id] = d
+      else delete nextP[parent.id]
     }
   } else {
-    const kids = kidsOf(l)
-    const phase = nextP[l.id]
+    // ================= PARENT click =================
+    const kids = childrenOf(labels, l.id)
+    const cur = nextP[l.id]
 
-    if (!phase) {
-      if (kids.length === 0) {
-        // LONE parent: EMPTY → GREEN — touch NOTHING else
+    if (kids.length === 0) {
+      // lone parent: none → green → none
+      if (cur) {
+        nextH.delete(l.id)
+        delete nextP[l.id]
+      } else {
         nextH.delete(l.id)
         nextP[l.id] = 'green'
-      } else {
-        // EMPTY → SAFFRON: only this group's children hidden; parent shown;
-        // other groups untouched
-        kids.forEach((k) => nextH.add(k.id))
-        nextH.delete(l.id)
-        nextP[l.id] = 'saffron'
       }
-    } else if (phase === 'saffron') {
-      if (kids.length === 0) {
-        nextH.delete(l.id)
-        delete nextP[l.id]
-      } else {
-        kids.forEach((k) => nextH.delete(k.id))
-        nextP[l.id] = 'green'
-      }
-    } else if (phase === 'green') {
-      if (kids.length === 0) {
-        nextH.delete(l.id)
-        delete nextP[l.id]
-      } else {
-        groupIds(l).forEach((gid) => nextH.delete(gid))
-        delete nextP[l.id]
-      }
-    } else {
-      // BLUE → GREEN directly (skip SAFFRON)
-      groupIds(l).forEach((gid) => nextH.delete(gid))
+    } else if (!cur) {
+      // none → amber: parent visible, all children hidden
+      kids.forEach((k) => nextH.add(k.id))
+      nextH.delete(l.id)
+      nextP[l.id] = 'amber'
+    } else if (cur === 'amber' || cur === 'yellow') {
+      // amber/yellow → green: parent + all children
+      kids.forEach((k) => nextH.delete(k.id))
+      nextH.delete(l.id)
       nextP[l.id] = 'green'
+    } else if (cur === 'blue') {
+      // blue → yellow: keep the children selection, add the parent
+      // (green when ALL children happen to be visible)
+      nextH.delete(l.id)
+      const visKids = kids.filter((k) => !nextH.has(k.id))
+      nextP[l.id] = visKids.length === kids.length ? 'green' : 'yellow'
+    } else {
+      // green → none: deselect the whole group
+      clearGroup(nextH, nextP, [l.id, ...kids.map((k) => k.id)], l.id)
     }
   }
 

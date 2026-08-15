@@ -266,3 +266,46 @@ export function hiddenLabelIds(labels: Label[], hidden: Set<string>): Set<string
   }
   return out
 }
+
+/** v1.11.7: VISIBLE (selected) label ids — the allowlist used by the views.
+ *  An event is shown iff its own label is selected, OR its parent label is
+ *  selected in "all sub-tags" mode. This makes the filter a true multi-select:
+ *  selecting "Fitness" (only this) shows ONLY Fitness' own events; adding
+ *  "Work" shows Work too; children show when their parent is in all-mode or
+ *  the child itself is selected. */
+export function visibleLabelIds(
+  labels: Label[],
+  hidden: Set<string>,
+  phases: Record<string, Phase>
+): Set<string> {
+  const vis = new Set<string>()
+  // true multi-select: if ANY selection exists, only selected groups show
+  const anySelected = hidden.size > 0 || Object.keys(phases).length > 0
+  const parents = labels.filter((l) => !l.parentId)
+  for (const p of parents) {
+    const phase = phases[p.id]
+    const kids = labels.filter((c) => c.parentId === p.id)
+    if (!phase) {
+      // group not selected — visible only when nothing at all is selected
+      if (!anySelected) {
+        vis.add(p.id)
+        for (const c of kids) vis.add(c.id)
+      }
+      continue
+    }
+    if (kids.length === 0) {
+      vis.add(p.id) // lone parent selected
+      continue
+    }
+    const parentHidden = hidden.has(p.id)
+    if (parentHidden) {
+      // blue: children only
+      for (const c of kids) if (!hidden.has(c.id)) vis.add(c.id)
+    } else {
+      // amber / yellow / green: parent + the visible children
+      vis.add(p.id)
+      for (const c of kids) if (!hidden.has(c.id)) vis.add(c.id)
+    }
+  }
+  return vis
+}

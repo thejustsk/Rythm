@@ -359,9 +359,22 @@ export default function CoinsView() {
     }
     const first = window.setTimeout(roll, 1500)
     const id = window.setInterval(roll, 5000)
+    // v1.11.7: pause the dice when the tab is hidden (saves CPU)
+    const onVis = () => {
+      if (document.hidden) {
+        window.clearInterval(id)
+      } else {
+        // restart on return
+        window.clearInterval(id)
+        const id2 = window.setInterval(roll, 5000)
+        ;(window as unknown as { __rhythmDice?: number }).__rhythmDice = id2
+      }
+    }
+    document.addEventListener('visibilitychange', onVis)
     return () => {
       window.clearTimeout(first)
       window.clearInterval(id)
+      document.removeEventListener('visibilitychange', onVis)
     }
   }, [statsKey, intro])
 

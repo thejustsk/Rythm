@@ -308,35 +308,43 @@ export function registerGamifyHandlers(db: Db): void {
    *  never evaluated). */
   ipcMain.handle('coins:perfectWeek', () => {
     if (!coinsEnabled()) return { award: false, amount: 0, weekKey: null, streak: computeStreak(db) }
-    // v1.11.4: the perfect-week bonus is ALWAYS Monday–Sunday (the streak
-    // calendar is Monday-only) — consistent with what the user sees.
+    // v1.11.6: the perfect-week bonus follows the user's FIRST DAY OF WEEK
+    // setting — the rewarded week is EXACTLY the week shown in the Week view
+    // (Sun–Sat when Sunday is set), so a week with a not-done first day can
+    // never be rewarded. The streak calendar stays Monday-only (display).
+    const startDow: 1 | 0 = (db.prepare("SELECT value FROM settings WHERE key = 'weekStart'").get() as any)?.value === 'sunday' ? 0 : 1
     const today = todayIso()
-    const monOfToday = weekKey(today)
+    const weekOfToday = weekStartIso(today, startDow)
     const awarded: string[] = []
     let amount = 0
     const hasKey = (k: string) => !!db.prepare('SELECT 1 FROM settings WHERE key = ?').get(k)
     for (let w = 0; w < 16; w++) {
-      const mon = addDaysIso(monOfToday, -7 * w)
-      const sun = addDaysIso(mon, 6)
-      if (sun > today) continue // week not complete yet
+      const wkStart = addDaysIso(weekOfToday, -7 * w)
+      const wkEnd = addDaysIso(wkStart, 6)
+      if (wkEnd > today) continue // week not complete yet
       const days = [0, 1, 2, 3, 4, 5, 6].map((i) => {
-        const iso = addDaysIso(mon, i)
+        const iso = addDaysIso(wkStart, i)
         const occs = occurrencesOn(db, iso)
         return { planned: occs.length, done: occs.filter((o) => o.status === 'done').length }
       })
+      // v1.11.7: the reward WAITS for the LAST day (Sunday / the week's end)
+      // to have at least one DONE event — a week where Mon–Sat are done but
+      // Sunday has nothing done (or only todos) is NOT yet perfect.
       if (!perfectWeekCheck(days)) continue
-      const key = 'streakAward.' + mon
-      // double-pay guard: never award a week if the overlapping Sunday-start
-      // week was already paid under an older build's setting (6-of-7 overlap)
-      if (hasKey(key) || hasKey('streakAward.' + addDaysIso(mon, -1))) continue
+      if (days[6].done === 0) continue // last day must have >=1 done
+      const key = 'streakAward.' + wkStart
+      // double-pay guard: the two week orientations overlap by 6 days — never
+      // pay twice for the same real days after switching the setting
+      const neighbor = startDow === 1 ? addDaysIso(wkStart, -1) : addDaysIso(wkStart, 1)
+      if (hasKey(key) || hasKey('streakAward.' + neighbor)) continue
       db.transaction(() => {
         db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, '1')").run(key)
         db.prepare(
           `INSERT INTO coin_transactions (id, ts, event_id, origin_date, label_id, type, amount, reason, refunded_at)
            VALUES (?, ?, NULL, ?, NULL, 'bonus', ?, 'Perfect week', NULL)`
-        ).run(crypto.randomUUID(), new Date().toISOString(), mon, PERFECT_WEEK_BONUS)
+        ).run(crypto.randomUUID(), new Date().toISOString(), wkStart, PERFECT_WEEK_BONUS)
       })()
-      awarded.push(mon)
+      awarded.push(wkStart)
       amount += PERFECT_WEEK_BONUS
     }
     return { award: awarded.length > 0, amount, weekKey: awarded[0] ?? null, streak: computeStreak(db) }
@@ -419,15 +427,29 @@ export function registerGamifyHandlers(db: Db): void {
       const date = addDaysIso(today, -i)
       series.push({ date, amount: net(date) })
     }
+    // v1.11.6: earned-by-label — 'earn' transactions group by their event's
+    // label (NULL → "No label"); 'refund' reduces that label's bucket; ALL
+    // bonus transactions (check-in, perfect week/month, streak milestone,
+    // all-done) group into a dedicated "Rewards 🏆" row — never "No label".
     const perLabelMap = new Map<string | null, number>()
+    let rewards = 0
     for (const t of txs) {
-      if (t.type !== 'earn' && t.type !== 'bonus') continue
-      perLabelMap.set(t.label_id ?? null, (perLabelMap.get(t.label_id ?? null) ?? 0) + t.amount)
+      if (t.type === 'bonus') { rewards += t.amount; continue }
+      if (t.type === 'earn' || t.type === 'refund') {
+        const delta = t.type === 'refund' ? -t.amount : t.amount
+        perLabelMap.set(t.label_id ?? null, (perLabelMap.get(t.label_id ?? null) ?? 0) + delta)
+      }
     }
     const labels = db.prepare('SELECT id, name FROM labels').all() as Array<{ id: string; name: string }>
-    const perLabel = [...perLabelMap.entries()]
-      .map(([id, amount]) => ({ labelId: id, labelName: id ? (labels.find((l) => l.id === id)?.name ?? '?') : 'No label', amount: Math.round(amount * 100) / 100 }))
-      .sort((a, b) => b.amount - a.amount)
+    const perLabel: Array<{ labelId: string | null; labelName: string; amount: number }> = []
+    for (const [id, amount] of perLabelMap.entries()) {
+      if (amount === 0) continue
+      perLabel.push({ labelId: id, labelName: id ? (labels.find((l) => l.id === id)?.name ?? '?') : 'No label', amount: Math.round(amount * 100) / 100 })
+    }
+    if (rewards !== 0) {
+      perLabel.push({ labelId: '__rewards__', labelName: 'Rewards 🏆', amount: Math.round(rewards * 100) / 100 })
+    }
+    perLabel.sort((a, b) => b.amount - a.amount)
     return { today: net(today), series, perLabel }
   })
 

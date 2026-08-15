@@ -166,6 +166,19 @@ function runCheck(db: Db): void {
 }
 
 /** Start (or restart) the notifier. Safe to call on every app start. */
+/** v1.11.7: called when the app is started by the Task Scheduler (--remind).
+ *  Checks once for events starting within the lead time; shows an OS toast if
+ *  any; the caller quits shortly after. */
+export function runRemindOnce(db: Db): void {
+  const cfg = readConfig(db)
+  const now = new Date()
+  const today = localDate(now)
+  const occs = occsForNotify(db, today)
+  const r = startupReminder(occs, now, cfg.leadMin)
+  if (r) show(r.title, r.body)
+  else console.log('[remind] nothing due — no toast')
+}
+
 export function startNotifier(db: Db): void {
   if (timer) clearInterval(timer)
   const cfg = readConfig(db)

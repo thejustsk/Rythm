@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useData, useUi, iso } from '@/state/store'
+import { useData, useUi, iso, visibleLabelIds } from '@/state/store'
 import { useToasts } from '@/state/toasts'
 import { computeOccurrences, occurrencesForDay } from '@/engine/occurrences'
 import type { Occurrence } from '@/engine/occurrences'
@@ -48,8 +48,11 @@ export default function WeekView({ days }: Props) {
 
   const filtered = useMemo(() => {
     const hidden = ui.hiddenLabels
+    const vis = visibleLabelIds(labels, hidden, ui.labelPhases)
     return occs.filter((o) => {
-      if (hidden.has(o.event.labelId ?? '')) return false
+      const lid = o.event.labelId ?? ''
+      if (lid && !vis.has(lid)) return false
+      if (!lid && hidden.size > 0) return false // no label + filter active → hide
       if (ui.statusFilter !== 'all' && o.event.status !== ui.statusFilter) return false
       if (!matchesSearch(o.event, labels, ui.search)) return false
       return true
@@ -144,6 +147,7 @@ export default function WeekView({ days }: Props) {
       }
       dragRef.current = st
       setDrag(st)
+      armWatchdog()
     }
 
     const onMove = (ev: PointerEvent) => {
@@ -200,7 +204,25 @@ export default function WeekView({ days }: Props) {
     const cleanup = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+      window.removeEventListener('blur', onCancel)
       window.removeEventListener('keydown', onKey)
+      if (watchdog) window.clearTimeout(watchdog)
+    }
+
+    // v1.11.6: a lost pointer (window blur / pointercancel / OS glitch) must
+    // never leave the drag stuck — the dragged block would stay hidden
+    const onCancel = () => {
+      cleanup()
+      dragging = false
+      dragRef.current = null
+      setDrag(null)
+    }
+    // watchdog: even if EVERYTHING is lost, auto-cancel after 12s
+    let watchdog: number | undefined
+    const armWatchdog = () => {
+      if (watchdog) window.clearTimeout(watchdog)
+      watchdog = window.setTimeout(onCancel, 12000)
     }
 
     const onUp = async () => {
@@ -241,6 +263,8 @@ export default function WeekView({ days }: Props) {
 
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+    window.addEventListener('blur', onCancel)
     window.addEventListener('keydown', onKey)
   }
 
