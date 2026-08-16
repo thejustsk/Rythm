@@ -114,10 +114,11 @@ function occsOnDay(db: Db, dayIso: string): Array<{ id: string; title: string; s
 }
 
 let timer: NodeJS.Timeout | null = null
-/** Slots already fired today (in-memory; settings persist the day flag). */
-const firedToday = new Set<string>()
 /** Startup near-event reminder fires once per app launch. */
 let startupChecked = false
+/** Day (yyyy-mm-dd) the last notifSlot-key cleanup ran — old keys are removed
+ *  once per day so the settings table never grows unboundedly. */
+let slotCleanupDay = ''
 
 /** v1.11.3: events are read with their real start times (title + start +
  *  status) so the pure decision logic (notifyCore) can pick the due ones. */
@@ -150,14 +151,23 @@ function runCheck(db: Db): void {
       if (r) show(r.title, r.body)
     }
 
-    // ---- 2) slot reminders: events starting within 2h after each slot ----
+    // ---- 2) slot reminders ----
+    // v1.11.18 (audit): "already fired" is persisted as `notifSlot.<date>.<slot>`
+    // in the settings table — restarting the app mid-day can NEVER re-fire a
+    // slot that already went off (the old in-memory Set was lost on restart),
+    // and a new day starts clean because keys are date-scoped.
+    if (slotCleanupDay !== today) {
+      slotCleanupDay = today
+      db.prepare("DELETE FROM settings WHERE key LIKE 'notifSlot.%' AND key NOT LIKE ?").run('notifSlot.' + today + '.%')
+    }
     for (const slot of cfg.slots) {
-      if (firedToday.has(slot)) continue
+      const slotKey = 'notifSlot.' + today + '.' + slot
+      if (db.prepare('SELECT 1 FROM settings WHERE key = ?').get(slotKey)) continue
       const [sh, sm] = slot.split(':').map(Number)
       const slotMin = sh * 60 + sm
       const nowMin = now.getHours() * 60 + now.getMinutes()
       if (nowMin < slotMin) continue
-      firedToday.add(slot)
+      set.run(slotKey, '1') // persisted BEFORE firing — a crash mid-fire can't re-fire
       const slotTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), sh, sm)
       const r = slotReminder(occs, now, slotTime)
       if (r) show(r.title, r.body)
@@ -200,10 +210,16 @@ export function registerNotificationHandlers(db: Db): void {
     return res
   })
   ipcMain.handle('notify:resetDay', () => {
-    // dev/testing helper: allows the morning summary to fire again today
+    // dev/testing helper: allows the morning summary + slots to fire again today
     const today = localDate(new Date())
     db.prepare('DELETE FROM settings WHERE key = ?').run('notifDay.' + today)
-    firedToday.clear()
+    db.prepare("DELETE FROM settings WHERE key LIKE 'notifSlot." + today + ".%'").run()
+    return { ok: true }
+  })
+  ipcMain.handle('notify:runNow', () => {
+    // dev/testing helper: run one reminder check immediately (same as the
+    // 30s tick) — used by the smoke suite to verify slot persistence
+    runCheck(db)
     return { ok: true }
   })
 }

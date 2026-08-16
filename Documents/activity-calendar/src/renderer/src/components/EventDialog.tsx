@@ -157,7 +157,7 @@ export default function EventDialog() {
           actionLabel: 'Undo',
           onAction: () => {
             void (async () => {
-              await removeEvent(newSeries.id)
+              await removeEvent(newSeries.id, { toTrash: false }) // internal split cleanup
               await updateEvent(event.id, { rrule: oldRrule })
             })()
           },
@@ -242,9 +242,9 @@ export default function EventDialog() {
       // system OFF → marking done does NOTHING (no prompt, no coins, ever)
     }
     const newStatus = fields.status
-    if (ui.statusFilter !== 'all' && ui.statusFilter !== newStatus) {
+    if (ui.statusSel.size > 0 && !ui.statusSel.has(newStatus)) {
       toasts.push({
-        message: `Status changed to ${newStatus} — the "${ui.statusFilter}" filter is hiding this block (use All to see it).`,
+        message: `Status changed to ${newStatus} — the selected filter is hiding this block (use All to see it).`,
         kind: 'danger',
         duration: 4500
       })
@@ -292,9 +292,11 @@ export default function EventDialog() {
     ui.closeEditor()
   }
 
-  /** Delete the whole series (master + every override). */
+  /** Delete the whole series (master + every override). v1.11.15: when the
+   *  editor was opened on an OVERRIDE, resolve the real master first — the
+   *  whole series must go, not just the override row. */
   const delSeries = async () => {
-    const master = event
+    const master = event.parentId ? events.find((e) => e.id === event.parentId) ?? event : event
     const children = events.filter((e) => e.parentId === master.id)
     const allScores: ScoreRow[] = []
     const allEarns: Array<{ eventId: string; originDate: string; amount: number; labelId: string | null }> = []

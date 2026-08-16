@@ -54,7 +54,9 @@ const api: Api = {
     setSystem: (on: boolean) => ipcRenderer.invoke('coins:setSystem', on),
     stats: () => ipcRenderer.invoke('coins:stats'),
     balance: (): Promise<number> => ipcRenderer.invoke('coins:balance'),
-    listTransactions: (): Promise<CoinTransaction[]> => ipcRenderer.invoke('coins:listTransactions')
+    listTransactions: (): Promise<CoinTransaction[]> => ipcRenderer.invoke('coins:listTransactions'),
+    scoreInsights: (opts?: { from?: string; to?: string; parentIds?: string[] }) =>
+      ipcRenderer.invoke('coins:scoreInsights', opts ?? {})
   },
   milestones: {
     list: () => ipcRenderer.invoke('milestones:list'),
@@ -72,11 +74,20 @@ const api: Api = {
       ipcRenderer.invoke('notify:setConfig', cfg),
     test: () => ipcRenderer.invoke('notify:test'),
     resetDay: () => ipcRenderer.invoke('notify:resetDay'),
+    runNow: () => ipcRenderer.invoke('notify:runNow'),
     onInApp: (cb: (d: { title: string; body: string }) => void) => {
       const listener = (_e: unknown, d: { title: string; body: string }) => cb(d)
       ipcRenderer.on('notify:inapp', listener)
       return () => ipcRenderer.removeListener('notify:inapp', listener)
     }
+  },
+  trash: {
+    list: () => ipcRenderer.invoke('trash:list'),
+    add: (id: string, payload: unknown) => ipcRenderer.invoke('trash:add', id, payload),
+    remove: (id: string) => ipcRenderer.invoke('trash:remove', id),
+    restore: (id: string, mode: 'series' | 'single') => ipcRenderer.invoke('trash:restore', id, mode),
+    purge: (id: string) => ipcRenderer.invoke('trash:purge', id),
+    empty: () => ipcRenderer.invoke('trash:empty')
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),

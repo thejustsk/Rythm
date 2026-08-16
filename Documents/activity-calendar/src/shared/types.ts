@@ -141,9 +141,10 @@ export interface Api {
     streakMilestone(): Promise<{ award: boolean; amount: number; streak: number; level: number | null }>
     system(): Promise<boolean>
     setSystem(on: boolean): Promise<void>
-    stats(): Promise<{ today: number; series: Array<{ date: string; amount: number }>; perLabel: Array<{ labelId: string | null; labelName: string; amount: number }> }>
+    stats(): Promise<{ today: number; series: Array<{ date: string; amount: number }>; perLabel: Array<{ labelId: string | null; labelName: string; parentId: string | null; parentName: string | null; amount: number }> }>
     balance(): Promise<number>
     listTransactions(): Promise<CoinTransaction[]>
+    scoreInsights(opts?: { from?: string; to?: string; parentIds?: string[] }): Promise<{ total: { on_time: number; late: number; off_schedule: number }; labels: Array<{ labelId: string | null; name: string; parentId: string | null; parentName: string | null; color: string | null; on_time: number; late: number; off_schedule: number; total: number }>; count: number }>
   }
   milestones: {
     list(): Promise<RewardMilestone[]>
@@ -158,7 +159,16 @@ export interface Api {
     setConfig(cfg: { enabled: boolean; slots: string[]; leadMin: number }): Promise<{ enabled: boolean; slots: string[]; leadMin: number }>
     test(): Promise<{ ok: boolean; reason: string }>
     resetDay(): Promise<{ ok: boolean }>
+    runNow(): Promise<{ ok: boolean }>
     onInApp(cb: (d: { title: string; body: string }) => void): () => void
+  }
+  trash: {
+    list(): Promise<Array<{ id: string; payload: { master: CalendarEvent; children?: CalendarEvent[] }; deletedAt: string }>>
+    add(id: string, payload: unknown): Promise<{ ok: boolean }>
+    remove(id: string): Promise<{ ok: boolean }>
+    restore(id: string, mode: 'series' | 'single'): Promise<{ ok: boolean; error?: string }>
+    purge(id: string): Promise<{ ok: boolean }>
+    empty(): Promise<{ ok: boolean }>
   }
   window: {
     minimize(): void

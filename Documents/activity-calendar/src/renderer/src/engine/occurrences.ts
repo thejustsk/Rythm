@@ -3,7 +3,7 @@
  * applying exdates (skipped days) and overrides (edited single occurrences).
  */
 import type { CalendarEvent } from '@shared/types'
-import { iterateRule, parseRRule, isoDate, startOfDay } from './recurrence'
+import { iterateRule, parseRRule, isoDate, startOfDay, addDays } from './recurrence'
 
 export interface Occurrence {
   /** stable key for selection: `${eventId}|${originDate}` */
@@ -91,7 +91,16 @@ export function computeOccurrences(
       if (!rule) {
         if (intersects(start, end, rangeStart, rangeEnd)) pushOcc(e, start, end, false)
       } else {
-        for (const day of iterateRule(rule, start)) addForDay(day)
+        // v1.11.18 (audit #5): fast-forward — start iterating at the earliest
+        // day an occurrence could START and still intersect this range
+        // (rangeStart minus the event's duration, plus a 1-day margin, floored
+        // to midnight). Everything before that cannot touch the range, so
+        // re-walking years of history on every render is gone.
+        const fromDay = addDays(
+          startOfDay(rangeStart),
+          -(Math.ceil(dur / 86400000) + 1)
+        )
+        for (const day of iterateRule(rule, start, fromDay)) addForDay(day)
       }
     } else {
       if (intersects(start, end, rangeStart, rangeEnd)) pushOcc(e, start, end, false)

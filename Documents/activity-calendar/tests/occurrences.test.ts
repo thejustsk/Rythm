@@ -82,3 +82,42 @@ describe('occurrence keys stay unique (ghost prevention)', () => {
     expect(aug11[0].isOverride).toBe(true)
   })
 })
+
+describe('v1.11.18 occurrence fast-forward (audit #5)', () => {
+  const dailyOld = ev('old', '2025-06-01T09:00', '2025-06-01T10:00', {
+    rrule: 'FREQ=DAILY;UNTIL=2026-12-31'
+  })
+
+  it('a 400+ day old daily series still yields every day of the view window', () => {
+    const occs = computeOccurrences([dailyOld], parseLocal('2026-08-10T00:00'), parseLocal('2026-08-17T00:00'))
+    const days = occs.map((o) => o.start.toLocaleDateString('en-US'))
+    expect(occs).toHaveLength(7)
+    expect(days[0]).toContain('8/10/2026') // locale-tolerant enough for CI
+    expect(days[6]).toContain('8/16/2026')
+  })
+
+  it('an overnight occurrence starting the day BEFORE the range still appears', () => {
+    const night = ev('night', '2026-08-09T23:00', '2026-08-10T00:30', { rrule: 'FREQ=DAILY' })
+    const occs = computeOccurrences([night], parseLocal('2026-08-10T00:00'), parseLocal('2026-08-11T00:00'))
+    // the 08-09 23:00 occurrence ends 00:30 on the 10th → inside the range
+    expect(occs.some((o) => o.start.getHours() === 23)).toBe(true)
+    expect(occs.some((o) => o.start.getDate() === 10 && o.start.getHours() === 23)).toBe(true)
+  })
+
+  it('exdates and overrides still apply with fast-forward', () => {
+    const withEx = ev('ex', '2025-01-01T09:00', '2025-01-01T10:00', {
+      rrule: 'FREQ=DAILY;UNTIL=2026-12-31',
+      exdates: ['2026-08-12']
+    })
+    const ov = ev('ov', '2026-08-13T14:00', '2026-08-13T15:00', {
+      parentId: 'ex',
+      originDate: '2026-08-13'
+    })
+    const occs = computeOccurrences([withEx, ov], parseLocal('2026-08-10T00:00'), parseLocal('2026-08-17T00:00'))
+    const days = occs.map((o) => o.eventId + '@' + o.originDate)
+    expect(days).not.toContain('ex@2026-08-12') // exdated
+    expect(days).toContain('ov@2026-08-13') // override replaces that day
+    expect(days).not.toContain('ex@2026-08-13')
+    expect(days).toContain('ex@2026-08-14') // the series continues after
+  })
+})

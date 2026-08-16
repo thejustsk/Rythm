@@ -17,6 +17,12 @@ export const PERFECT_WEEK_BONUS = 100
 export const PERFECT_MONTH_BONUS = 300
 export const CHECKIN_STREAK_MULTIPLIER_DAY = 7 // every 7-day streak → ×2
 
+/** v1.11.18 (audit): the ONE coin-rounding helper — 2 decimal places, used by
+ *  every earner/ledger/stats calculation so they can never disagree. */
+export function roundCoins(n: number): number {
+  return Math.round(n * 100) / 100
+}
+
 export interface CheckInResult {
   award: boolean
   streak: number
@@ -37,6 +43,13 @@ export function checkInState(
   today: string
 ): CheckInResult {
   if (lastCheckIn === today) return { award: false, streak: checkInStreak, amount: 0, multiplier: 1 }
+  // v1.11.18 (audit): clock-tamper guard — if the stored check-in date is in
+  // the FUTURE, the system clock was moved backward after a check-in. The
+  // user already checked in for this day: grant NOTHING and never reset the
+  // streak (ISO dates compare lexicographically == chronologically).
+  if (lastCheckIn !== null && lastCheckIn > today) {
+    return { award: false, streak: checkInStreak, amount: 0, multiplier: 1 }
+  }
   const streak = lastCheckIn === addDaysIso(today, -1) ? checkInStreak + 1 : 1
   const multiplier = streak % CHECKIN_STREAK_MULTIPLIER_DAY === 0 ? 2 : 1
   return { award: true, streak, amount: CHECKIN_BASE * multiplier, multiplier }

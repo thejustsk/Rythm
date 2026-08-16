@@ -1570,6 +1570,10 @@
   75% { transform: rotate(12deg) scale(1.26); opacity: 0.9; }
 }
 .seg-btn.active .twinkle { color: var(--amber); }
+/* v1.11.15: the ACTIVE tab turns BLUE when its view is showing today
+   (second click on the active tab jumps to today) */
+.seg-btn.active.today { border-color: var(--accent); color: var(--accent); background: rgba(10, 132, 255, 0.08); }
+.seg-btn.active.today .seg-coin, .seg-btn.active.today .seg-ico { color: var(--accent); }
 
 /* ---------- milestones ---------- */
 .mile-widget {
@@ -2732,6 +2736,99 @@
   transition: background 0.12s ease, border-color 0.12s ease;
 }
 .ef-ampm:hover { background: var(--surface-3); border-color: var(--accent); }
+
+/* ---------- trash (v1.11.14) ---------- */
+.trash-view { height: 100%; overflow-y: auto; padding: 4px 2px 24px; display: flex; flex-direction: column; gap: 12px; }
+.trash-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.trash-title { font-size: 13px; font-weight: 700; }
+.trash-timeline { position: relative; display: flex; flex-direction: column; gap: 10px; }
+/* the thread connecting the cards */
+.trash-timeline::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+  background: linear-gradient(180deg, var(--border-strong), var(--border));
+}
+.trash-card {
+  position: relative;
+  margin-left: 22px;
+  padding: 10px 14px;
+  min-height: 74px;
+  height: 74px;
+  box-sizing: border-box;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--text-3);
+  border-radius: 10px;
+  box-shadow: var(--shadow-1);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+}
+/* the node on the thread for each card */
+.trash-card::before {
+  content: '';
+  position: absolute;
+  left: -19px;
+  top: 14px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  border: 2px solid var(--border-strong);
+}
+.trash-card-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.trash-card-title { font-weight: 700; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trash-card-meta { font-size: 10px; color: var(--text-3); margin-left: auto; white-space: nowrap; }
+.trash-card-when { font-size: 11px; color: var(--text-2); }
+.trash-card-actions { display: flex; gap: 6px; margin-top: auto; }
+.trash-card-actions .btn { padding: 2px 10px; font-size: 11px; }
+.trash-link { display: none; }
+
+/* ---------- score insights (v1.11.15) ---------- */
+.score-total-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.score-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 12px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--border);
+}
+.score-pill b { font-size: 13px; }
+.score-pill i { font-style: normal; color: var(--text-3); font-size: 11px; }
+.score-pill.ontime { background: rgba(52, 199, 89, 0.12); color: var(--green); border-color: rgba(52, 199, 89, 0.4); }
+.score-pill.late { background: rgba(255, 159, 10, 0.12); color: var(--amber); border-color: rgba(255, 159, 10, 0.4); }
+.score-pill.off { background: rgba(255, 59, 48, 0.1); color: var(--red); border-color: rgba(255, 59, 48, 0.4); }
+.score-by-label { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.score-label-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; }
+.score-label-name { width: 110px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+.score-label-track { flex: 1; height: 10px; border-radius: 999px; overflow: hidden; display: flex; background: var(--surface-3); }
+.score-seg { height: 100%; }
+.score-seg.ontime { background: var(--green); }
+.score-seg.late { background: var(--amber); }
+.score-seg.off { background: var(--red); }
+.score-label-total { width: 28px; text-align: right; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+/* v1.11.16/17: on-time/late/off-schedule grouped under parent labels —
+   rows use the SAME .ins-progress style as the Label completion panel;
+   only the track stays the 3-colour on-time/late/off bar */
+.score-group { display: flex; flex-direction: column; }
+.score-kids {
+  margin-left: 14px; padding-left: 10px;
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 4px; padding-top: 2px; padding-bottom: 2px;
+}
+
+/* v1.11.17: earned-by-label parent groups (Coins view) */
+.earn-groups { display: flex; flex-direction: column; gap: 2px; }
+.earn-group { display: flex; flex-direction: column; }
+.earn-kids {
+  margin-left: 14px; padding-left: 10px;
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 1px; padding-top: 1px; padding-bottom: 2px;
+}
 
 /* ---------- toasts ---------- */
 .toast-host {

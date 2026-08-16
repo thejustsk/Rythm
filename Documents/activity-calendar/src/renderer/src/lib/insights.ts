@@ -97,11 +97,14 @@ export function computeInsights(
   hidden: Set<string>,
   rangeStart: Date,
   rangeEnd: Date,
-  /** filter to one top-level label (its children included) — M7 item 7 */
-  topLabelId: string | null = null,
+  /** filter to one or more top-level labels (their children included) — M7
+   *  item 7; v1.11.16: accepts a SET for multi-select chips; empty = all */
+  topLabelId: string | null | Set<string> = null,
   /** the selected period — the heatmap window follows it */
   period: string = 'week'
 ): Insights {
+  const topLabelIds: Set<string> =
+    topLabelId == null ? new Set() : typeof topLabelId === 'string' ? new Set([topLabelId]) : topLabelId
   const occs = computeOccurrences(events, rangeStart, rangeEnd)
 
   const perDay = new Map<string, DayStat>()
@@ -134,7 +137,7 @@ export function computeInsights(
         child = l.parentId ? l : null
       }
     }
-    if (topLabelId && (top?.id ?? null) !== topLabelId) continue
+    if (topLabelIds.size > 0 && !topLabelIds.has(top?.id ?? '')) continue
 
     if (o.event.status === 'cancelled') {
       cancelledCount++
@@ -390,9 +393,11 @@ export function computeInsights(
 
   // ---- plain-language digest ("different vernaculars") ----
   const digest: string[] = []
-  if (topLabelId) {
-    const focusLabel = labels.find((l) => l.id === topLabelId)
-    digest.push(`Showing insights for "${focusLabel?.name ?? 'this label'}" only.`)
+  if (topLabelIds.size > 0) {
+    const names = labels
+      .filter((l) => !l.parentId && topLabelIds.has(l.id))
+      .map((l) => l.name)
+    digest.push(`Showing insights for ${names.length > 0 ? names.join(', ') : 'the selected labels'} only.`)
   }
   if (count === 0) {
     digest.push('No activities in this period yet — add a few blocks and the insights light up.')

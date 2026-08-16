@@ -3,6 +3,7 @@ import { useData, useUi, hiddenLabelIds } from '@/state/store'
 import { computeInsights, fmtH, isoD } from '@/lib/insights'
 import { startOfDay, addDays, isoDate } from '@/engine/recurrence'
 import { parseLocal } from '@/engine/occurrences'
+import { groupScores, type ScoreRow } from '@/lib/scoreGroups'
 import type { Label } from '@shared/types'
 
 type Period = 'week' | 'month' | 'year' | 'all' | 'custom'
@@ -74,9 +75,27 @@ export default function InsightsView() {
   const [periodAlt, setPeriodAlt] = useState(false)
   const [customFrom, setCustomFrom] = useState(todayIso)
   const [customTo, setCustomTo] = useState(todayIso)
-  const [focusTop, setFocusTop] = useState<string | null>(null)
+  /** v1.11.16: MULTI-SELECT parent-label chips — empty set = All labels */
+  const [focusTops, setFocusTops] = useState<Set<string>>(new Set())
   const [expandedDonut, setExpandedDonut] = useState<string | null>(null)
   const [expandedComp, setExpandedComp] = useState<string | null>(null)
+  const [scoreIns, setScoreIns] = useState<{ total: { on_time: number; late: number; off_schedule: number }; labels: Array<{ labelId: string | null; name: string; parentId: string | null; parentName: string | null; color: string | null; on_time: number; late: number; off_schedule: number; total: number }>; count: number } | null>(null)
+  /** v1.11.17: on-time/late/off-schedule parent groups — DEFAULT COLLAPSED,
+   *  and only ONE parent open at a time (single key, like Label completion) */
+  const [scoreOpenKey, setScoreOpenKey] = useState<string | null>(null)
+
+  // v1.11.15/16: on-time/late/off-schedule follows the selected PERIOD and
+  // the parent-label chips chosen on top — never the sidebar (user decision)
+  const scoreRange = useMemo(() => {
+    const { start, end } = rangeFor(period, events, customFrom, customTo, periodAlt)
+    return { from: isoD(start), to: isoD(end) }
+  }, [period, events, customFrom, customTo, periodAlt])
+  useEffect(() => {
+    void window.api.coins
+      .scoreInsights({ from: scoreRange.from, to: scoreRange.to, parentIds: [...focusTops] })
+      .then(setScoreIns)
+      .catch(() => {})
+  }, [scoreRange.from, scoreRange.to, focusTops])
   const heatWrapRef = useRef<HTMLDivElement>(null)
   const [faces, setFaces] = useState<number[]>([0, 0, 0, 0])
   const [bestStreak, setBestStreak] = useState(0)
@@ -117,8 +136,23 @@ export default function InsightsView() {
 
   const ins = useMemo(() => {
     const { start, end } = rangeFor(period, events, customFrom, customTo, periodAlt)
-    return computeInsights(events, labels, hidden, start, end, focusTop, period)
-  }, [events, labels, hidden, period, periodAlt, customFrom, customTo, focusTop])
+    return computeInsights(events, labels, hidden, start, end, focusTops, period)
+  }, [events, labels, hidden, period, periodAlt, customFrom, customTo, focusTops])
+
+  /** v1.11.16: does the period contain events that would actually be VISIBLE
+   *  here (not label-hidden, and inside the selected parent chips)? The
+   *  "Last …" toggle must never open an empty period. */
+  const visibleIn = (start: Date, end: Date): boolean =>
+    events.some((e) => {
+      if (hidden.has(e.labelId ?? '')) return false
+      if (focusTops.size > 0) {
+        const l = labels.find((x) => x.id === e.labelId)
+        const topId = l ? (l.parentId ?? l.id) : ''
+        if (!focusTops.has(topId)) return false
+      }
+      const t = parseLocal(e.startLocal).getTime()
+      return t >= start.getTime() && t < end.getTime()
+    })
 
   // when the heatmap data changes, scroll to the LATEST weeks (right end)
   useEffect(() => {
@@ -250,10 +284,11 @@ export default function InsightsView() {
 
   const donutKids = (parentId: string) => ins.childStats[parentId] ?? []
   const compKids = (parentId: string) => ins.childStats[parentId] ?? []
-  // when a single parent label is focused, its sublabels are shown by default
-  // (manual expand/collapse still works via explicit state)
-  const effDonut = expandedDonut ?? (focusTop && donutKids(focusTop).length > 0 ? focusTop : null)
-  const effComp = expandedComp ?? (focusTop && compKids(focusTop).length > 0 ? focusTop : null)
+  // when EXACTLY ONE parent label is selected, its sublabels are shown by
+  // default (manual expand/collapse still works via explicit state)
+  const autoFocus = focusTops.size === 1 ? [...focusTops][0] : null
+  const effDonut = expandedDonut ?? (autoFocus && donutKids(autoFocus).length > 0 ? autoFocus : null)
+  const effComp = expandedComp ?? (autoFocus && compKids(autoFocus).length > 0 ? autoFocus : null)
 
   return (
     <div className="insights-view">
@@ -270,14 +305,11 @@ export default function InsightsView() {
                   title={p.id === 'week' || p.id === 'month' || p.id === 'year' ? 'Click again for the previous period' : undefined}
                   onClick={() => {
                     if (isActive && (p.id === 'week' || p.id === 'month' || p.id === 'year')) {
-                      // toggle amber: previous period (only if data exists)
+                      // toggle amber: previous period — ONLY when that period
+                      // has visible (unfiltered) data (v1.11.16 robustness)
                       const prev = rangeFor(p.id, events, customFrom, customTo, !periodAlt)
-                      const hasData = events.some((e) => {
-                        const t = parseLocal(e.startLocal).getTime()
-                        return t >= prev.start.getTime() && t < prev.end.getTime()
-                      })
                       if (!periodAlt) {
-                        if (hasData) setPeriodAlt(true)
+                        if (visibleIn(prev.start, prev.end)) setPeriodAlt(true)
                       } else {
                         setPeriodAlt(false)
                       }
@@ -305,19 +337,37 @@ export default function InsightsView() {
         </div>
 
         <div className="ins-chips">
-          <button className={`ins-chip${focusTop === null ? ' active' : ''}`} onClick={() => { setFocusTop(null); setExpandedDonut(null); setExpandedComp(null) }}>
+          <button
+            className={`ins-chip${focusTops.size === 0 ? ' active' : ''}`}
+            title="Show all labels"
+            onClick={() => { setFocusTops(new Set()); setExpandedDonut(null); setExpandedComp(null) }}
+          >
             All labels
           </button>
-          {parents.map((p: Label) => (
-            <button
-              key={p.id}
-              className={`ins-chip${focusTop === p.id ? ' active' : ''}`}
-              onClick={() => { setFocusTop(p.id); setExpandedDonut(null); setExpandedComp(null) }}
-            >
-              <span className="ins-chip-dot" style={{ background: p.color ?? '#8E8E93' }} />
-              {p.name}
-            </button>
-          ))}
+          {parents.map((p: Label) => {
+            const on = focusTops.has(p.id)
+            return (
+              <button
+                key={p.id}
+                className={`ins-chip${on ? ' active' : ''}`}
+                title={on ? 'Click again to remove' : 'Toggle (multi-select — pick several together)'}
+                onClick={() => {
+                  const n = new Set(focusTops)
+                  if (n.has(p.id)) n.delete(p.id)
+                  else n.add(p.id)
+                  // v1.11.17: selecting EVERY parent = nothing filtered →
+                  // snap back to the "All labels" chip automatically
+                  if (parents.length > 0 && n.size === parents.length) n.clear()
+                  setFocusTops(n)
+                  setExpandedDonut(null)
+                  setExpandedComp(null)
+                }}
+              >
+                <span className="ins-chip-dot" style={{ background: p.color ?? '#8E8E93' }} />
+                {p.name}
+              </button>
+            )
+          })}
         </div>
 
         {/* dice KPI cards — roll right→left every 5s */}
@@ -547,6 +597,30 @@ export default function InsightsView() {
           </div>
 
           <div className="ins-panel wide">
+            <div className="ins-panel-title">On-time · Late · Off-schedule</div>
+            {!scoreIns || scoreIns.count === 0 ? (
+              <div className="ins-empty">No scores yet — mark activities done and rate them to see patterns.</div>
+            ) : (
+              <>
+                <div className="score-total-row">
+                  {(['on_time', 'late', 'off_schedule'] as const).map((k) => {
+                    const n = scoreIns.total[k]
+                    const pct = scoreIns.count ? Math.round((n / scoreIns.count) * 100) : 0
+                    const label = k === 'on_time' ? 'On time' : k === 'late' ? 'Late' : 'Off schedule'
+                    const cls = k === 'on_time' ? 'ontime' : k === 'late' ? 'late' : 'off'
+                    return (
+                      <div key={k} className={`score-pill ${cls}`}>
+                        <b>{pct}%</b> <span>{label}</span> <i>({n})</i>
+                      </div>
+                    )
+                  })}
+                </div>
+                <ScoreGroups rows={scoreIns.labels} openKey={scoreOpenKey} setOpenKey={setScoreOpenKey} />
+              </>
+            )}
+          </div>
+
+          <div className="ins-panel wide">
             <div className="ins-panel-title">Label completion</div>
             {ins.perLabel.length === 0 ? (
               <div className="ins-empty">No data yet</div>
@@ -626,5 +700,68 @@ function Donut({ data }: { data: Array<{ id: string | null; name: string; color:
       <text x={55} y={52} textAnchor="middle" fontSize={14} fontWeight={700} fill="var(--text)">{fmtH(total)}</text>
       <text x={55} y={66} textAnchor="middle" fontSize={8} fill="var(--text-3)">planned</text>
     </svg>
+  )
+}
+
+/** v1.11.17: On-time · Late · Off-schedule rows grouped under their PARENT
+ *  labels — the row STYLE matches the Label completion panel (colored name +
+ *  track + value + caret, children indented), the track stays the 3-colour
+ *  on-time/late/off bar, and only ONE group is open at a time (default
+ *  COLLAPSED, like Label completion). Every child row carries its own bar. */
+function ScoreGroups({
+  rows,
+  openKey,
+  setOpenKey
+}: {
+  rows: ScoreRow[]
+  openKey: string | null
+  setOpenKey: (k: string | null) => void
+}) {
+  const groups = groupScores(rows)
+  if (groups.length === 0) return null
+  return (
+    <div className="score-by-label">
+      {groups.map((g) => {
+        const hasKids = g.children.length > 0
+        const open = openKey === g.key
+        const tot = Math.max(1, g.total)
+        const segs = (o: number, la: number, of: number) => (
+          <div className="score-label-track">
+            <div className="score-seg ontime" style={{ width: `${(o / tot) * 100}%` }} title={`On time ${o}`} />
+            <div className="score-seg late" style={{ width: `${(la / tot) * 100}%` }} title={`Late ${la}`} />
+            <div className="score-seg off" style={{ width: `${(of / tot) * 100}%` }} title={`Off schedule ${of}`} />
+          </div>
+        )
+        return (
+          <div key={g.key} className="score-group">
+            <button
+              className={`ins-progress${hasKids ? ' expandable' : ''}${open ? ' open' : ''}`}
+              onClick={() => hasKids && setOpenKey(open ? null : g.key)}
+              title={hasKids ? (open ? 'Collapse' : 'Expand') : undefined}
+            >
+              <span className="ins-progress-name" style={g.color ? { color: g.color } : undefined}>{g.name}</span>
+              {segs(g.on_time, g.late, g.off_schedule)}
+              <span className="ins-progress-val">{g.total}</span>
+              {hasKids && <span className="ins-caret">{open ? '▾' : '▸'}</span>}
+            </button>
+            {hasKids && open && (
+              <div className="score-kids">
+                {g.children.map((c) => (
+                  <div key={c.labelId ?? c.name} className="ins-progress sub">
+                    <span className="ins-progress-name" style={c.color ? { color: c.color } : undefined}>{c.name}</span>
+                    <div className="score-label-track">
+                      <div className="score-seg ontime" style={{ width: `${(c.on_time / Math.max(1, c.total)) * 100}%` }} title={`On time ${c.on_time}`} />
+                      <div className="score-seg late" style={{ width: `${(c.late / Math.max(1, c.total)) * 100}%` }} title={`Late ${c.late}`} />
+                      <div className="score-seg off" style={{ width: `${(c.off_schedule / Math.max(1, c.total)) * 100}%` }} title={`Off schedule ${c.off_schedule}`} />
+                    </div>
+                    <span className="ins-progress-val">{c.total}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
   )
 }

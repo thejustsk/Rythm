@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useData, useUi, hiddenLabelIds } from '@/state/store'
-import { clickLabel, deriveParentPhase, type Phase } from '@/lib/labelSelect'
+import { clickLabel, deriveParentPhase, shouldShowAllChip, type Phase } from '@/lib/labelSelect'
 import { useToasts } from '@/state/toasts'
 import { useCoins } from '@/state/coins'
 import { fmtCoins } from '@/lib/gamification'
@@ -346,7 +346,7 @@ export default function Sidebar() {
               <div className="li-note">Click a label to cycle its state. Multiple labels combine (multi-select). Empty = off.</div>
             </div>
           )}
-          {ui.hiddenLabels.size > 0 && (
+          {shouldShowAllChip(labels, ui.hiddenLabels, ui.labelPhases) && (
             <button className="all-chip" onClick={() => ui.setHiddenLabels([])}>
               All
             </button>

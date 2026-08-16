@@ -17,6 +17,7 @@ import { loadPrefs } from '@/lib/prefs'
 import { installShortcuts } from '@/lib/shortcuts'
 import { weekStartOf } from '@/lib/dates'
 import { useCoins } from '@/state/coins'
+import { useTrash } from '@/state/trash'
 import { useToasts } from '@/state/toasts'
 import { useMilestones } from '@/state/milestones'
 import MonthView from '@/views/MonthView'
@@ -26,6 +27,7 @@ import DayView from '@/views/DayView'
 import AgendaView from '@/views/AgendaView'
 import InsightsView from '@/views/InsightsView'
 import CoinsView from '@/views/CoinsView'
+import TrashView from '@/views/TrashView'
 
 export default function App() {
   const load = useData((s) => s.load)
@@ -33,6 +35,7 @@ export default function App() {
   const loadCoins = useCoins((s) => s.load)
   const loadMilestones = useMilestones((s) => s.load)
   const ui = useUi()
+  const loadTrash = useTrash((s) => s.load)
 
   useEffect(() => {
     void loadTheme()
@@ -40,6 +43,7 @@ export default function App() {
     void load()
     void loadCoins()
     void loadMilestones()
+    void loadTrash()
     // daily check-in bonus (once per day) — skipped while the coin system is OFF
     if (!useCoins.getState().systemOn) return
     window.api.coins.checkIn().then((r) => {
@@ -99,6 +103,9 @@ export default function App() {
   // as a toast (previously it was an invisible console rejection)
   useEffect(() => {
     const onRej = (e: PromiseRejectionEvent) => {
+      // v1.11.18 (audit #8): store actions already toast their own specific
+      // message and mark the error — don't double-toast the generic one
+      if ((e.reason as { toasted?: boolean } | undefined)?.toasted) return
       const msg = e.reason?.message ?? String(e.reason ?? 'Unknown error')
       useToasts.getState().push({ message: `Something went wrong: ${msg}`, kind: 'danger', duration: 5000 })
     }
@@ -148,7 +155,7 @@ export default function App() {
     return days
   })()
 
-  const isInsights = ui.view === 'insights' || ui.view === 'coins'
+  const isInsights = ui.view === 'insights' || ui.view === 'coins' || ui.view === 'trash'
 
   return (
     <div className="app">
@@ -171,6 +178,7 @@ export default function App() {
                 {ui.view === 'agenda' && <AgendaView />}
                 {ui.view === 'insights' && <InsightsView />}
                 {ui.view === 'coins' && <CoinsView />}
+                {ui.view === 'trash' && <TrashView />}
               </div>
             )}
           </div>

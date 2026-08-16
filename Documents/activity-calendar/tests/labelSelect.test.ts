@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clickLabel, deriveParentPhase, type Phase } from '../src/renderer/src/lib/labelSelect'
+import { clickLabel, deriveParentPhase, shouldShowAllChip, type Phase } from '../src/renderer/src/lib/labelSelect'
 import type { Label } from '../src/shared/types'
 
 const mk = (id: string, name: string, parentId: string | null = null): Label => ({
@@ -159,5 +159,20 @@ describe('FULL INDEPENDENCE between groups (multi-select)', () => {
     expect(p.X).toBeUndefined()
     expect(p.P).toBe('blue')
     expect(h.has('B')).toBe(false)
+  })
+})
+
+describe('shouldShowAllChip (v1.11.14)', () => {
+  it('hidden when nothing is selected', () => {
+    expect(shouldShowAllChip(labels, new Set(), {})).toBe(false)
+  })
+  it('shown for a partial selection (amber)', () => {
+    expect(shouldShowAllChip(labels, new Set(['A', 'B', 'C']), { P: 'amber' })).toBe(true)
+  })
+  it('hidden when everything is fully green', () => {
+    expect(shouldShowAllChip(labels, new Set(), { P: 'green', X: 'green' })).toBe(false)
+  })
+  it('shown when one group is green but another is not selected', () => {
+    expect(shouldShowAllChip(labels, new Set(), { P: 'green' })).toBe(true)
   })
 })

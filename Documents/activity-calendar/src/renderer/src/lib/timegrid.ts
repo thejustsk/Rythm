@@ -2,8 +2,15 @@
 
 export const DAY_MINUTES = 24 * 60
 
-/** Pixel height per minute in the week/day grid. */
-export const PX_PER_MIN = 0.55
+/** Base pixel height per minute in the week/day grid. */
+export const BASE_PX_PER_MIN = 0.55
+
+/** v1.11.14: live grid zoom (Ctrl+P). Mutated via setGridZoom; every importer
+ *  sees the new value (ES module live binding). */
+export let PX_PER_MIN = BASE_PX_PER_MIN
+export function setGridZoom(z: number): void {
+  PX_PER_MIN = Math.round(BASE_PX_PER_MIN * z * 1000) / 1000
+}
 
 export function toMinutes(d: Date): number {
   return d.getHours() * 60 + d.getMinutes()

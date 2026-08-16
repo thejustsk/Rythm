@@ -287,6 +287,9 @@ export default function CoinsView() {
   const [pathKey, setPathKey] = useState(0)
   const [chartCol, setChartCol] = useState<string | undefined>(undefined)
   const [streakInfo, setStreakInfo] = useState(false)
+  /** v1.11.17: earned-by-label parent groups — DEFAULT COLLAPSED, only ONE
+   *  group open at a time (single key, like the Insights label panels) */
+  const [earnOpenKey, setEarnOpenKey] = useState<string | null>(null)
   const kpiBandRef = useRef<HTMLDivElement>(null)
 
   // ---- intro: cinematic coin-drop plays IMMEDIATELY on every Coins visit.
@@ -415,6 +418,52 @@ export default function CoinsView() {
   )
 
   const bestStreak = useCoins((s) => s.bestStreak) as unknown as number
+
+  /** v1.11.16: earned-by-label grouped under PARENT labels (parent's own part
+   *  + children) so the panel gets expand/collapse toggles like the Insights
+   *  label panels. 'No label' and 'Rewards 🏆' stay top-level rows. */
+  const earnGroups = useMemo(() => {
+    const pl = coins.stats?.perLabel ?? []
+    type Row = (typeof pl)[number]
+    interface G {
+      key: string
+      name: string
+      amount: number
+      own: Row | null
+      children: Row[]
+    }
+    const groups = new Map<string, G>()
+    const order: string[] = []
+    const get = (key: string, name: string): G => {
+      let g = groups.get(key)
+      if (!g) {
+        g = { key, name, amount: 0, own: null, children: [] }
+        groups.set(key, g)
+        order.push(key)
+      }
+      return g
+    }
+    for (const r of pl) {
+      if (r.labelId === '__rewards__' || r.labelId === null) {
+        // top-level rows: Rewards 🏆 and 'No label'
+        get(r.labelId ?? '__none__', r.labelName).own = r
+        get(r.labelId ?? '__none__', r.labelName).amount += r.amount
+      } else if (r.parentId) {
+        const g = get(r.parentId, r.parentName ?? r.labelName)
+        g.children.push(r)
+        g.amount += r.amount
+      } else {
+        // a top-level label with its own earnings
+        const g = get(r.labelId, r.labelName)
+        g.own = r
+        g.amount += r.amount
+      }
+    }
+    const out = order.map((k) => groups.get(k)!)
+    for (const g of out) g.children.sort((a, b) => b.amount - a.amount)
+    out.sort((a, b) => b.amount - a.amount)
+    return out
+  }, [coins.stats])
 
   // ---- streak calendar: full history, week start follows Settings ----
   const cal = useMemo(() => {
@@ -709,18 +758,54 @@ export default function CoinsView() {
             </div>
             <div className="ins-panel">
               <div className="ins-panel-title">Earned by label</div>
-              {!coins.stats || coins.stats.perLabel.length === 0 ? (
+              {earnGroups.length === 0 ? (
                 <div className="ins-empty">No coins earned yet</div>
               ) : (
-                coins.stats.perLabel.map((l) => (
-                  <div key={l.labelId ?? 'none'} className="ins-progress">
-                    <span className="ins-progress-name">{l.labelName}</span>
-                    <div className="ins-progress-track">
-                      <div className="ins-progress-done" style={{ width: `${(l.amount / Math.max(1, coins.stats!.perLabel[0].amount)) * 100}%`, background: 'var(--amber)' }} />
-                    </div>
-                    <span className="ins-progress-val">{fmtCoins(l.amount)} 🪙</span>
-                  </div>
-                ))
+                <div className="earn-groups">
+                  {earnGroups.map((g) => {
+                    const hasKids = g.children.length > 0
+                    const open = earnOpenKey === g.key
+                    const maxAmt = Math.max(1, earnGroups[0]?.amount ?? 1)
+                    return (
+                      <div key={g.key} className="earn-group">
+                        <button
+                          className={`ins-progress${hasKids ? ' expandable' : ''}${open ? ' open' : ''}`}
+                          onClick={() => hasKids && setEarnOpenKey(open ? null : g.key)}
+                          title={hasKids ? (open ? 'Collapse' : 'Expand') : undefined}
+                        >
+                          <span className="ins-progress-name">{g.name}</span>
+                          <div className="ins-progress-track">
+                            <div className="ins-progress-done" style={{ width: `${(g.amount / maxAmt) * 100}%`, background: 'var(--amber)' }} />
+                          </div>
+                          <span className="ins-progress-val">{fmtCoins(g.amount)} 🪙</span>
+                          {hasKids && <span className="ins-caret">{open ? '▾' : '▸'}</span>}
+                        </button>
+                        {hasKids && open && (
+                          <div className="earn-kids">
+                            {g.children.map((c) => (
+                              <div key={c.labelId} className="ins-progress sub">
+                                <span className="ins-progress-name">{c.labelName}</span>
+                                <div className="ins-progress-track">
+                                  <div className="ins-progress-done" style={{ width: `${(c.amount / maxAmt) * 100}%`, background: 'var(--amber)' }} />
+                                </div>
+                                <span className="ins-progress-val">{fmtCoins(c.amount)} 🪙</span>
+                              </div>
+                            ))}
+                            {g.own && g.children.length > 0 && (
+                              <div className="ins-progress sub">
+                                <span className="ins-progress-name">↳ Own (no sub-label)</span>
+                                <div className="ins-progress-track">
+                                  <div className="ins-progress-done" style={{ width: `${(g.own.amount / maxAmt) * 100}%`, background: 'var(--amber)' }} />
+                                </div>
+                                <span className="ins-progress-val">{fmtCoins(g.own.amount)} 🪙</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
               )}
             </div>
           </div>

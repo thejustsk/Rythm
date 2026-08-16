@@ -1,8 +1,28 @@
 import { create } from 'zustand'
 import type { Phase } from '@/lib/labelSelect'
 import type { CalendarEvent, EventInput, EventStatus, Label } from '@shared/types'
+import { useToasts } from '@/state/toasts'
 
 // ---------------- data store ----------------
+
+/** v1.11.18 (audit #8): every IPC call in the store goes through this guard —
+ *  a failure shows a SPECIFIC toast and rethrows with `toasted` set, so the
+ *  global handler doesn't double-toast. State is only mutated AFTER the IPC
+ *  succeeds, so a failed call never leaves the store out of sync. */
+async function guard<T>(what: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    useToasts.getState().push({
+      message: `Couldn't ${what} — ${msg}`,
+      kind: 'danger',
+      duration: 5000
+    })
+    ;(err as { toasted?: boolean }).toasted = true
+    throw err
+  }
+}
 
 interface DataState {
   events: CalendarEvent[]
@@ -11,7 +31,9 @@ interface DataState {
   load: () => Promise<void>
   createEvent: (input: EventInput) => Promise<CalendarEvent>
   updateEvent: (id: string, patch: Partial<EventInput>) => Promise<CalendarEvent>
-  removeEvent: (id: string) => Promise<void>
+  /** v1.11.14: unless toTrash === false, the event is snapshotted into the
+   *  TRASH before deletion (internal cleanup passes false). */
+  removeEvent: (id: string, opts?: { toTrash?: boolean }) => Promise<void>
   /** Re-create a previously deleted event with its original id (undo). */
   restoreEvent: (ev: CalendarEvent) => Promise<void>
   /** Create a one-off override copy of a recurring event + skip that day in the series — atomically.
@@ -29,43 +51,63 @@ export const useData = create<DataState>((set, get) => ({
   loaded: false,
 
   load: async () => {
-    const [events, labels] = await Promise.all([window.api.events.list(), window.api.labels.list()])
+    const [events, labels] = await guard('load your data', () =>
+      Promise.all([window.api.events.list(), window.api.labels.list()])
+    )
     set({ events, labels, loaded: true })
   },
 
   createEvent: async (input) => {
-    const ev = await window.api.events.create(input)
+    const ev = await guard('save this activity', () => window.api.events.create(input))
     set({ events: [...get().events, ev] })
     return ev
   },
 
   updateEvent: async (id, patch) => {
-    const ev = await window.api.events.update(id, patch)
+    const ev = await guard('save this activity', () => window.api.events.update(id, patch))
     set({ events: get().events.map((e) => (e.id === id ? ev : e)) })
     return ev
   },
 
-  removeEvent: async (id) => {
-    await window.api.events.remove(id)
+  removeEvent: async (id, opts?: { toTrash?: boolean }) => {
+    // v1.11.14: snapshot the event (+ its children if it's a series master)
+    // and keep it in the TRASH before deleting (unless internal cleanup)
+    if (opts?.toTrash !== false) {
+      const all = get().events
+      const master = all.find((e) => e.id === id)
+      if (master) {
+        const children = all.filter((e) => e.parentId === id)
+        try {
+          await window.api.trash.add(id, { master, children })
+        } catch {
+          /* trash write failure must not block the delete */
+        }
+      }
+    }
+    await guard('delete this activity', () => window.api.events.remove(id))
     set({ events: get().events.filter((e) => e.id !== id && e.parentId !== id) })
   },
 
   restoreEvent: async (ev) => {
-    const created = await window.api.events.create({
-      id: ev.id,
-      title: ev.title,
-      description: ev.description,
-      startLocal: ev.startLocal,
-      endLocal: ev.endLocal,
-      allDay: ev.allDay,
-      labelId: ev.labelId,
-      colorOverride: ev.colorOverride,
-      status: ev.status,
-      rrule: ev.rrule,
-      exdates: ev.exdates,
-      parentId: ev.parentId,
-      originDate: ev.originDate
-    })
+    // v1.11.14: an UNDO brings the event back — drop it from the trash
+    try { await window.api.trash.remove(ev.id) } catch { /* non-fatal */ }
+    const created = await guard('restore this activity', () =>
+      window.api.events.create({
+        id: ev.id,
+        title: ev.title,
+        description: ev.description,
+        startLocal: ev.startLocal,
+        endLocal: ev.endLocal,
+        allDay: ev.allDay,
+        labelId: ev.labelId,
+        colorOverride: ev.colorOverride,
+        status: ev.status,
+        rrule: ev.rrule,
+        exdates: ev.exdates,
+        parentId: ev.parentId,
+        originDate: ev.originDate
+      })
+    )
     set({ events: [...get().events, created] })
   },
 
@@ -76,20 +118,22 @@ export const useData = create<DataState>((set, get) => ({
     let created: CalendarEvent
     if (existing) {
       // update in place — keeps the id stable so scores stay attached
-      created = await window.api.events.update(existing.id, {
-        title: override.title,
-        description: override.description,
-        startLocal: override.startLocal,
-        endLocal: override.endLocal,
-        allDay: override.allDay,
-        labelId: override.labelId,
-        colorOverride: override.colorOverride,
-        status: override.status
-      })
+      created = await guard('save this activity', () =>
+        window.api.events.update(existing.id, {
+          title: override.title,
+          description: override.description,
+          startLocal: override.startLocal,
+          endLocal: override.endLocal,
+          allDay: override.allDay,
+          labelId: override.labelId,
+          colorOverride: override.colorOverride,
+          status: override.status
+        })
+      )
     } else {
-      created = await window.api.events.create(override)
+      created = await guard('save this activity', () => window.api.events.create(override))
     }
-    const updated = await window.api.events.update(masterId, { exdates })
+    const updated = await guard('save this activity', () => window.api.events.update(masterId, { exdates }))
     set((s) => ({
       events: [
         ...s.events.filter(
@@ -103,18 +147,18 @@ export const useData = create<DataState>((set, get) => ({
   },
 
   createLabel: async (name, color, parentId) => {
-    const label = await window.api.labels.create(name, color, parentId)
+    const label = await guard('create this label', () => window.api.labels.create(name, color, parentId))
     set({ labels: [...get().labels, label] })
     return label
   },
 
   updateLabel: async (id, patch) => {
-    const label = await window.api.labels.update(id, patch)
+    const label = await guard('save this label', () => window.api.labels.update(id, patch))
     set({ labels: get().labels.map((l) => (l.id === id ? label : l)) })
   },
 
   removeLabel: async (id) => {
-    await window.api.labels.remove(id)
+    await guard('delete this label', () => window.api.labels.remove(id))
     // drop the label and any children (DB cascades; mirror it locally)
     const ids = new Set([id])
     let grew = true
@@ -133,7 +177,7 @@ export const useData = create<DataState>((set, get) => ({
 
 // ---------------- ui store ----------------
 
-export type View = 'day' | 'week' | 'month' | 'agenda' | 'insights' | 'coins'
+export type View = 'day' | 'week' | 'month' | 'agenda' | 'insights' | 'coins' | 'trash'
 
 export interface QuickAddState {
   open: boolean
@@ -145,7 +189,9 @@ export interface QuickAddState {
 interface UiState {
   view: View
   cursor: Date
-  statusFilter: EventStatus | 'all'
+  /** v1.11.16: MULTI-SELECT status filter — a set of statuses to show;
+   *  an EMPTY set means "All" (nothing filtered). */
+  statusSel: ReadonlySet<EventStatus>
   hiddenLabels: Set<string>
   labelPhases: Record<string, Phase>
   search: string
@@ -160,12 +206,15 @@ interface UiState {
   dayStartHour: number
   clock24: boolean
   defaultDuration: number
+  /** Ctrl+P vertical grid zoom multiplier (day/week views). */
+  gridZoom: number
   setPrefs: (p: { weekStart: 'monday' | 'sunday'; dayStartHour: number; clock24: boolean; defaultDuration: number }) => void
+  setGridZoom: (z: number) => void
   setView: (v: View) => void
   setCursor: (d: Date) => void
   navigate: (days: number) => void
   goToday: () => void
-  setStatusFilter: (s: EventStatus | 'all') => void
+  setStatusSel: (sel: ReadonlySet<EventStatus>) => void
   toggleLabelHidden: (id: string) => void
   setHiddenLabels: (ids: string[]) => void
   setLabelPhases: (phases: Record<string, Phase>) => void
@@ -189,13 +238,13 @@ const initialView = (): View => {
   // guard for non-browser (unit tests) environments
   if (typeof location === 'undefined') return 'month'
   const v = new URLSearchParams(location.search).get('view')
-  return v === 'day' || v === 'week' || v === 'month' || v === 'agenda' || v === 'insights' || v === 'coins' ? v : 'month'
+  return v === 'day' || v === 'week' || v === 'month' || v === 'agenda' || v === 'insights' || v === 'coins' || v === 'trash' ? v : 'month'
 }
 
 export const useUi = create<UiState>((set, get) => ({
   view: initialView(),
   cursor: new Date(),
-  statusFilter: 'all',
+  statusSel: new Set<EventStatus>(),
   hiddenLabels: new Set<string>(),
   labelPhases: {},
   search: '',
@@ -208,7 +257,9 @@ export const useUi = create<UiState>((set, get) => ({
   dayStartHour: 0,
   clock24: true,
   defaultDuration: 60,
+  gridZoom: 1,
   setPrefs: (p) => set({ weekStart: p.weekStart, dayStartHour: p.dayStartHour, clock24: p.clock24, defaultDuration: p.defaultDuration }),
+  setGridZoom: (z) => set({ gridZoom: z }),
   setView: (v) => set({ view: v }),
   setCursor: (d) => set({ cursor: d }),
   navigate: (days) => {
@@ -217,7 +268,7 @@ export const useUi = create<UiState>((set, get) => ({
     set({ cursor: d })
   },
   goToday: () => set({ cursor: new Date() }),
-  setStatusFilter: (s) => set({ statusFilter: s }),
+  setStatusSel: (sel) => set({ statusSel: sel }),
   toggleLabelHidden: (id) => {
     const next = new Set(get().hiddenLabels)
     if (next.has(id)) next.delete(id)

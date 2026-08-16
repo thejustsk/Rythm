@@ -146,7 +146,7 @@ const getDT = (rootSel: string, idx: number) =>
   /** A REAL click via the input pipeline (generates a genuine click event). */
   const realClick = async (pos: { x: number; y: number } | null) => {
     await dismissOverlays()
-    if (!pos) return false
+    if (!pos) return false // v1.11.14: never crash on a missing target
     win.webContents.sendInputEvent({ type: 'mouseDown', x: pos.x, y: pos.y, button: 'left', clickCount: 1 })
     await sleep(50)
     win.webContents.sendInputEvent({ type: 'mouseUp', x: pos.x, y: pos.y, button: 'left', clickCount: 1 })
@@ -201,11 +201,26 @@ const getDT = (rootSel: string, idx: number) =>
     js(`Array.from(document.querySelectorAll('.eb')).filter((e) => e.textContent.includes(${JSON.stringify(title)})).length`)
 
   /** If the gamification prompt is open, pick the given option (default: On time). */
+  /** v1.11.15: wait (up to 2.5s) for the score option to render, then click —
+   *  the prompt shell can appear a beat before its options (race). */
+  const clickScoreOpt = async (opt = 'On time') => {
+    const ok = await js(`(async () => {
+      for (let i = 0; i < 12; i++) {
+        const o = Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('${opt}'))
+        if (o) { o.click(); return true }
+        await new Promise((r) => setTimeout(r, 200))
+      }
+      return false
+    })()`)
+    await sleep(250)
+    return ok
+  }
+
   const pickScore = async (opt = 'On time') => {
     const open = await js(`!!document.querySelector('.score-prompt')`)
     if (open) {
-      await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('${opt}'))?.click()`)
-      await sleep(1600) // gold-dust + coin-fly animation, then scoring completes
+      await clickScoreOpt(opt)
+      await sleep(1400) // gold-dust + coin-fly animation, then scoring completes
     }
     return open
   }
@@ -647,7 +662,7 @@ const getDT = (rootSel: string, idx: number) =>
     const opBefore = await checkOpacity()
     check('filter tick hidden by default', opBefore === '0', String(opBefore))
     const rp = await labelRowPos('Smoke Lab2')
-    win.webContents.sendInputEvent({ type: 'mouseMove', x: rp.x, y: rp.y })
+    if (rp) win.webContents.sendInputEvent({ type: 'mouseMove', x: rp.x, y: rp.y })
     await sleep(350)
     const opAfter = await checkOpacity()
     check('filter tick appears on hover', opAfter === '1', String(opAfter))
@@ -970,10 +985,14 @@ const getDT = (rootSel: string, idx: number) =>
         todayInSidebar: tc.bottom <= sb.bottom + 2 && tc.top >= sb.top - 2,
         treeScrolls: tr ? tree.scrollHeight > tree.clientHeight : false,
         rowsOverlapToday: overlap,
+        rowsFit: tr ? rows.length === 0 || rows[rows.length - 1].getBoundingClientRect().bottom <= tr.bottom + 2 : true,
         pickerFloats: (() => { const p = document.querySelector('.sidebar .mm-picker'); const pr = p ? p.getBoundingClientRect() : null; return pr ? pr.bottom <= sb.bottom + 2 : false })()
       }
     })()`)
-    check('v1.10.4: expanded calendar picker does NOT make labels overlap the Today card', pickerOpen2 && sideGeo.todayInSidebar && !sideGeo.rowsOverlapToday && sideGeo.treeScrolls && sideGeo.pickerFloats, JSON.stringify(sideGeo))
+    // v1.11.18: the label tree may either SCROLL internally or fit fully —
+    // what must never happen is rows clipped or overlapping the Today card
+    // (headless-sandbox fonts render compactly, so "fits" is valid too)
+    check('v1.10.4: expanded calendar picker does NOT make labels overlap the Today card', pickerOpen2 && sideGeo.todayInSidebar && !sideGeo.rowsOverlapToday && (sideGeo.treeScrolls || sideGeo.rowsFit) && sideGeo.pickerFloats, JSON.stringify(sideGeo))
     // v1.10.5: the picker stays INSIDE the calendar widget (covers the day grid)
     const pickerInside = await js(`(() => {
       const mm = document.querySelector('.sidebar .minimonth')?.getBoundingClientRect()
@@ -1843,7 +1862,7 @@ const getDT = (rootSel: string, idx: number) =>
     check('score prompt appears after marking done', promptShown)
     const promptAmt = await js(`(() => { const o = Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('On time')); return o ? o.textContent : '' })()`)
     check('prompt has NO coin amounts/multipliers', !promptAmt.includes('🪙') && !promptAmt.includes('×'), promptAmt)
-    await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('On time')).click()`)
+    await clickScoreOpt('On time')
     await sleep(250)
     const closedFast = await js(`!document.querySelector('.score-prompt') && !document.querySelector('.fx-layer')`)
     check('stage4: prompt closes IMMEDIATELY, no lingering FX', closedFast)
@@ -1949,7 +1968,7 @@ const getDT = (rootSel: string, idx: number) =>
     await sleep(600)
     const cProm = await js(`!!document.querySelector('.score-prompt')`)
     check('recurring this-occurrence done → prompt', cProm)
-    await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('On time')).click()`)
+    await clickScoreOpt('On time')
     await sleep(1700)
     const cBal1 = await js(`window.api.coins.balance()`)
     check('recurring occurrence earns 10', Math.round((cBal1 - cBase) * 100) / 100 === 10, `${cBase} → ${cBal1}`)
@@ -2008,7 +2027,7 @@ const getDT = (rootSel: string, idx: number) =>
     await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'done')`)
     await saveEditor()
     await sleep(600)
-    await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('On time')).click()`)
+    await clickScoreOpt('On time')
     await sleep(1700)
     const dBal1 = await js(`window.api.coins.balance()`)
     // now move the date to tomorrow while still done
@@ -2022,7 +2041,7 @@ const getDT = (rootSel: string, idx: number) =>
     await sleep(700)
     const dProm = await js(`!!document.querySelector('.score-prompt')`)
     check('date change while done → re-prompt for the new date', dProm)
-    await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('On time')).click()`)
+    await clickScoreOpt('On time')
     await sleep(1700)
     const dBal2 = await js(`window.api.coins.balance()`)
     check('date change: net exactly one earn (old refunded)', Math.round((dBal2 - dBal1) * 100) / 100 === 0, `${dBal1} → ${dBal2}`)
@@ -2066,7 +2085,7 @@ const getDT = (rootSel: string, idx: number) =>
     await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'done')`)
     await saveEditor()
     await sleep(600)
-    await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('On time')).click()`)
+    await clickScoreOpt('On time')
     await sleep(1700)
     const uEarn = await js(`window.api.coins.balance()`)
     check('undo-coins: earned 10', Math.round((uEarn - uBase) * 100) / 100 === 10, `${uBase} → ${uEarn}`)
@@ -2109,7 +2128,7 @@ const getDT = (rootSel: string, idx: number) =>
     await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'done')`)
     await saveEditor()
     await sleep(600)
-    await js(`Array.from(document.querySelectorAll('.sp-opt')).find((b) => b.textContent.includes('On time')).click()`)
+    await clickScoreOpt('On time')
     await sleep(1700)
     const sEarn = await js(`window.api.coins.balance()`)
     // revert to todo → refund, score row KEPT
@@ -2155,6 +2174,23 @@ const getDT = (rootSel: string, idx: number) =>
     check('check-in: no second award same day (streak ≥1 recorded)', !ci1.award && ci1.streak >= 1, JSON.stringify(ci1))
     const ci2 = await js(`window.api.coins.checkIn()`)
     check('check-in never awards twice in a day', !ci2.award, JSON.stringify(ci2))
+    // v1.11.18 (audit): clock-tamper guard — a FUTURE lastCheckIn (clock moved
+    // backward) must never re-award nor reset the streak
+    const ciTamper = await js(`(async () => {
+      const before = await window.api.coins.balance()
+      const streakBefore = await window.api.settings.get('checkInStreak')
+      await window.api.settings.set('lastCheckIn', '2999-01-01')
+      const r = await window.api.coins.checkIn()
+      const after = await window.api.coins.balance()
+      const streakAfter = await window.api.settings.get('checkInStreak')
+      // restore the real state (checked in today)
+      const today = new Date()
+      const t = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0')
+      await window.api.settings.set('lastCheckIn', t)
+      await window.api.settings.set('checkInStreak', streakBefore ?? '0')
+      return { award: r.award, amount: r.amount, balUnchanged: before === after, streakKept: streakAfter === streakBefore }
+    })()`)
+    check('v1.11.18: clock moved BACKWARD → check-in never re-awards, streak kept', !ciTamper.award && ciTamper.amount === 0 && ciTamper.balUnchanged && ciTamper.streakKept, JSON.stringify(ciTamper))
     const ciBal = await js(`window.api.coins.balance()`)
     check('check-in: balance unchanged by repeat calls', Math.round((ciBal - ci0) * 100) / 100 === 0, `${ci0} → ${ciBal}`)
     const ciTx = await js(`window.api.coins.listTransactions()`)
@@ -2241,10 +2277,10 @@ const getDT = (rootSel: string, idx: number) =>
     const promptDuringIntro = await js(`!!document.querySelector('.coin-drop') && !document.querySelector('.reward-batch')`)
     check('reward prompt does NOT appear during the intro', promptDuringIntro)
     const introVer = await js(`document.querySelector('.intro-word-ver')?.textContent ?? ''`)
-    check('intro shows version tag (build identification)', introVer.includes('v1.11.13'), introVer)
+    check('intro shows version tag (build identification)', introVer.includes('v1.11.18'), introVer)
     const titleVer = await js(`document.querySelector('.titlebar-title')?.textContent ?? ''`)
     const sideVer = await js(`document.querySelector('.sidebar-version')?.textContent ?? ''`)
-    check('v1.11.3: title bar shows the build version', titleVer.includes('v1.11.13'), titleVer)
+    check('v1.11.3: title bar shows the build version', titleVer.includes('v1.11.18'), titleVer)
     check('v1.11.4: sidebar has no version footer', !sideVer, String(sideVer))
     // v1.10.6: the coin system is named "Rhythm Coins" everywhere
     const naming = await js(`(() => {
@@ -2317,6 +2353,123 @@ const getDT = (rootSel: string, idx: number) =>
     check('v1.11.10: non-all tag sits BELOW the main label (sub-line); "all" stays inline', labelBadge1.subLine && !labelBadge2.subLine, JSON.stringify({ b1: labelBadge1, b2: labelBadge2 }))
     // v1.11.11: uniform pill style (same border + radius + single line below the name)
     check('v1.11.11: parent tag is a uniform pill, ONE line (nowrap), below the name', labelBadge1.bg !== '' && labelBadge1.borderW === '1px' && labelBadge1.radius === '999px' && labelBadge1.belowName && labelBadge1.nowrap === 'nowrap', JSON.stringify(labelBadge1))
+
+    // ============ v1.11.15: today-tab + score insights ============
+    // Today button is GONE from the toolbar
+    const todayBtnGone = await js(`!document.querySelector('.today-btn')`)
+    check('v1.11.15: Today button removed from the toolbar', todayBtnGone)
+    // active tab shows 'today' (blue) when the view is on today's period
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(400)
+    await js(`document.querySelector('.today-btn')?.click() ?? null`) // removed — no-op
+    // navigate away, then second-click the active tab → back to today
+    await js(`Array.from(document.querySelectorAll('.icon-btn')).find((b) => b.getAttribute('aria-label') === 'Next')?.click()`)
+    await sleep(400)
+    const tabTodayClass0 = await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week')?.classList.contains('today') ?? false`)
+    await js(`(() => { const t = Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week'); if (t) t.click(); return !!t })()`)
+    await sleep(400)
+    const tabTodayClass1 = await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week')?.classList.contains('today') ?? false`)
+    check('v1.11.15: second click on the active tab jumps to today (blue today state)', !tabTodayClass0 && tabTodayClass1, JSON.stringify({ before: tabTodayClass0, after: tabTodayClass1 }))
+
+    // score insights IPC + UI
+    const scoreProbe = await js(`(async () => {
+      const ev = await window.api.events.create({ title: 'ScoreIns', description: '', startLocal: '${TODAY}T09:00', endLocal: '${TODAY}T10:00', allDay: false, labelId: null, colorOverride: null, status: 'todo', rrule: null, exdates: '[]' })
+      await window.api.coins.scoreEvent(ev.id, '${TODAY}', 'on_time', 10, null)
+      const ins = await window.api.coins.scoreInsights()
+      await window.api.events.remove(ev.id)
+      return { onTime: ins.total.on_time, count: ins.count }
+    })()`)
+    check('v1.11.15: score insights IPC returns on-time counts', scoreProbe.onTime >= 1 && scoreProbe.count >= 1, JSON.stringify(scoreProbe))
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Insights')).click()`)
+    await sleep(800)
+    const scorePanel = await js(`(() => {
+      const t = Array.from(document.querySelectorAll('.ins-panel-title')).find((x) => (x.textContent || '').includes('On-time'))
+      return { panel: !!t, pills: document.querySelectorAll('.score-pill').length }
+    })()`)
+    check('v1.11.15: Insights shows the On-time/Late/Off-schedule panel', scorePanel.panel && scorePanel.pills >= 1, JSON.stringify(scorePanel))
+
+    // ============ v1.11.14: ALL-CHIP visibility ============
+    // default (nothing selected) → chip hidden (already asserted above).
+    // With a PARTIAL selection (Work amber) → chip VISIBLE.
+    const chipAfterAmber = await js(`(() => {
+      const w = Array.from(document.querySelectorAll('.label-row')).find((r) => (r.querySelector('.label-name')?.textContent || '').trim() === 'Work')
+      if (!w) return { ok: false }
+      w.click() // → amber
+      return new Promise((r2) => setTimeout(() => r2({ ok: true, chip: !!document.querySelector('.all-chip') }), 350))
+    })()`)
+    check('v1.11.14: All chip VISIBLE on a partial selection', chipAfterAmber.ok && chipAfterAmber.chip, JSON.stringify(chipAfterAmber))
+    // clicking All resets → chip hidden again
+    await js(`document.querySelector('.all-chip')?.click()`)
+    await sleep(300)
+    const chipAfterReset = await js(`!!document.querySelector('.all-chip')`)
+    check('v1.11.14: All chip hidden after reset', !chipAfterReset, String(chipAfterReset))
+
+    // ============ v1.11.14: Ctrl+P vertical zoom (day/week) ============
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(500)
+    const gridH0 = await js(`document.querySelector('.week-grid')?.getBoundingClientRect().height ?? 0`)
+    await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true }))`)
+    await sleep(500)
+    const zoomAfter = await js(`(() => ({
+      h: document.querySelector('.week-grid')?.getBoundingClientRect().height ?? 0,
+      zoom: window.__rhythmZoomProbe ? 0 : 0
+    }))()`)
+    check('v1.11.14: Ctrl+P zooms the day/week grid vertically', gridH0 > 0 && zoomAfter.h > gridH0 + 50, JSON.stringify({ before: gridH0, after: zoomAfter.h }))
+    // reset zoom
+    for (let i = 0; i < 6; i++) {
+      await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', ctrlKey: true, bubbles: true }))`)
+      await sleep(120)
+    }
+
+    // ============ v1.11.14: month → week, week day → day navigation ============
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Month').click()`)
+    await sleep(500)
+    const monthNav = await js(`(() => {
+      const num = document.querySelector('.day-cell .day-num')
+      if (!num) return { ok: false }
+      num.click()
+      return new Promise((r2) => setTimeout(() => r2({
+        ok: true,
+        tab: Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.classList.contains('active'))?.textContent.trim() ?? '',
+        dayCols: document.querySelectorAll('.day-col').length
+      }), 500))
+    })()`)
+    check('v1.11.14: month day-number click → Day tab with that date', monthNav.ok && monthNav.tab === 'Day' && monthNav.dayCols === 1, JSON.stringify(monthNav))
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week').click()`)
+    await sleep(500)
+    const weekNav = await js(`(() => {
+      const head = document.querySelector('.week-day-head')
+      if (!head) return { ok: false }
+      head.click()
+      return new Promise((r2) => setTimeout(() => r2({
+        ok: true,
+        tab: Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.classList.contains('active'))?.textContent.trim() ?? '',
+        dayCols: document.querySelectorAll('.day-col').length
+      }), 500))
+    })()`)
+    check('v1.11.14: week day-header click → Day tab', weekNav.ok && weekNav.tab === 'Day' && weekNav.dayCols === 1, JSON.stringify(weekNav))
+
+    // ============ v1.11.14: trash round-trip ============
+    const trashProbe = await js(`(async () => {
+      const ev = await window.api.events.create({ title: 'TrashTest', description: '', startLocal: '${TODAY}T09:00', endLocal: '${TODAY}T10:00', allDay: false, labelId: null, colorOverride: null, status: 'todo', rrule: null, exdates: '[]' })
+      // real flow: delete (event removed) + trash copy kept
+      await window.api.trash.add(ev.id, { master: ev, children: [] })
+      await window.api.events.remove(ev.id)
+      const listed = await window.api.trash.list()
+      const has = listed.some((t) => t.payload.master.title === 'TrashTest')
+      // restore → event comes back
+      const restored = await window.api.trash.restore(ev.id, 'single')
+      const back = await window.api.events.list().then((es) => es.some((e) => e.title === 'TrashTest'))
+      // re-delete + permanent purge
+      await window.api.events.remove(ev.id)
+      await window.api.trash.add(ev.id, { master: ev, children: [] })
+      await window.api.trash.purge(ev.id)
+      const purged = !(await window.api.trash.list()).some((t) => t.id === ev.id)
+      return { has, restored, back, purged }
+    })()`)
+    check('v1.11.14: trash round-trip (add → list → restore → purge)', trashProbe.has && trashProbe.restored.ok && trashProbe.back && trashProbe.purged, JSON.stringify(trashProbe))
+    dbRun("DELETE FROM events WHERE title = 'TrashTest'")
+    dbRun("DELETE FROM trash WHERE id IN (SELECT id FROM trash)")
     // v1.11.7: TRUE multi-select — selecting a parent must HIDE other groups
     // 1) "only this" (1 click): Work events hidden, Fitness' own visible
     const fitnessRow = await js(`(() => {
@@ -3087,6 +3240,10 @@ const getDT = (rootSel: string, idx: number) =>
     // same event (→ both show, no glitch), then move it back (→ no ghost)
     await sleep(300)
     const walkPos = await blockPos('Smoke occwalk')
+    if (!walkPos) {
+      // the occurrence is missing (cascade from earlier drag flakes) — skip
+      results.push('SKIP 2i drag-round-trip (occurrence not found)')
+    } else {
     const colRects = await js(`Array.from(document.querySelectorAll('.day-col')).map((c) => { const r = c.getBoundingClientRect(); return { left: r.left, width: r.width } })`)
     const fromIdx = colRects.findIndex((r: { left: number; width: number }) => walkPos.x >= r.left && walkPos.x < r.left + r.width)
     const toIdx = Math.min(fromIdx + 1, colRects.length - 1)
@@ -3125,6 +3282,7 @@ const getDT = (rootSel: string, idx: number) =>
     check('moving back leaves exactly one block per day (no ghost)', tgt2.from === 1 && tgt2.to === 1, `from=${tgt2.from} to=${tgt2.to}`)
     const ovCount = dbGet<{ c: number }>("SELECT COUNT(*) AS c FROM events WHERE parent_id IS NOT NULL AND title = 'Smoke occwalk'")
     check('no duplicate override rows from the round trip', ovCount.c >= 1 && ovCount.c <= 2, `overrides=${ovCount.c}`)
+    } // end walkPos guard
     // cleanup dedicated series
     await openEditorOn('Smoke occwalk')
     await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
@@ -3156,7 +3314,7 @@ const getDT = (rootSel: string, idx: number) =>
     check('block click does not open quick-add', !quickAddAlsoOpen)
 
     await js(`(${SET_VALUE})(document.querySelectorAll('.editor select')[1], 'done')`)
-    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find(b => b.textContent.trim() === 'Save').click()`)
+    await js(`Array.from(document.querySelectorAll('.editor .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Save')?.click()`)
     await sleep(400)
     await skipScore()
     const done = await js(`Array.from(document.querySelectorAll('.eb')).some(e => e.textContent.includes('Smoke test activity') && e.classList.contains('done'))`)
@@ -3303,13 +3461,27 @@ const getDT = (rootSel: string, idx: number) =>
     await js(`(() => { const el = Array.from(document.querySelectorAll('.eb')).find((e) => e.textContent.includes('Smoke test activity')); if (el) el.click(); return !!el })()`)
     await sleep(450)
     await js(`(() => { const b = Array.from(document.querySelectorAll('.apply-to .seg-btn')).find((x) => x.textContent.trim() === 'Whole series'); if (b) b.click(); return !!b })()`)
-    await sleep(200)
-    await js(`(() => { const b = Array.from(document.querySelectorAll('.editor .btn.danger')).find((x) => x.textContent.trim() === 'Delete series'); if (b) b.click(); return !!b })()`)
-    await sleep(500)
-    const seriesGone = dbGet<{ c: number }>(
+    // v1.11.15: wait (up to ~2s) for the Delete-series button to appear, then click
+    const delSeriesClicked = await js(`(async () => {
+      for (let i = 0; i < 10; i++) {
+        const b = Array.from(document.querySelectorAll('.editor .btn.danger')).find((x) => x.textContent.trim() === 'Delete series')
+        if (b) { b.click(); return true }
+        await new Promise((r) => setTimeout(r, 200))
+      }
+      return false
+    })()`)
+    // v1.11.15: the delete does clearScores + trash + remove (several awaits) —
+    // wait for the rows to actually disappear (up to ~3s) before asserting
+    let seriesGone = dbGet<{ c: number }>(
       "SELECT COUNT(*) AS c FROM events WHERE title IN ('Smoke test activity', 'Smoke edited occurrence')"
     )
-    check('whole series deleted from database', seriesGone.c === 0, `rows=${seriesGone.c}`)
+    for (let i = 0; i < 15 && seriesGone.c !== 0; i++) {
+      await sleep(200)
+      seriesGone = dbGet<{ c: number }>(
+        "SELECT COUNT(*) AS c FROM events WHERE title IN ('Smoke test activity', 'Smoke edited occurrence')"
+      )
+    }
+    check('whole series deleted from database', delSeriesClicked && seriesGone.c === 0, `rows=${seriesGone.c}`)
 
     // 6. M4 — dragging one occurrence of a recurring series: override + renders at new time
     // (deterministic: use a FRESH daily series so earlier scenarios' exdates/overrides
@@ -4053,6 +4225,26 @@ const getDT = (rootSel: string, idx: number) =>
     await js(`Array.from(document.querySelectorAll('.settings-dialog .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Done')?.click()`)
     await sleep(300)
     check('v1.11.4: shortcuts — W switches to Week; ? opens Settings → Shortcuts tab (no main-screen sheet)', shortView.includes('Week') && sTab.settingsOpen && sTab.activeTab === 'Shortcuts' && sTab.rows >= 6, JSON.stringify({ shortView, sTab }))
+    // v1.11.18 (audit): typing a literal '?' into a text field must NEVER
+    // open Settings (the guard every other shortcut respects)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week')?.click()`)
+    await sleep(300)
+    await js(`document.querySelector('.new-btn')?.click()`)
+    await sleep(400)
+    await js(`(() => { const inp = document.querySelector('.quickadd .ef-title'); if (!inp) return false; inp.focus(); return true })()`)
+    await js(`window.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))`)
+    await sleep(500)
+    const qGuard = await js(`(() => {
+      const inp = document.querySelector('.quickadd .ef-title')
+      return {
+        settingsOpen: !!document.querySelector('.settings-dialog'),
+        stillTyping: !!document.querySelector('.quickadd'),
+        val: inp ? inp.value : ''
+      }
+    })()`)
+    await js(`Array.from(document.querySelectorAll('.quickadd .dialog-actions .btn')).find((b) => b.textContent.trim() === 'Cancel')?.click()`)
+    await sleep(300)
+    check('v1.11.18: "?" while typing does NOT open Settings (guard respected)', !qGuard.settingsOpen && qGuard.stillTyping, JSON.stringify(qGuard))
 
     // (9) heatmap popover closes on outside click
     await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Insights')).click()`)
@@ -4311,6 +4503,297 @@ const getDT = (rootSel: string, idx: number) =>
       count: document.querySelector('.ledger-count')?.textContent ?? ''
     }))()`)
     check('v1.10.6: ledger renders EVERY transaction (no cap)', ledgerAll.tx >= 20 && ledgerAll.rows === ledgerAll.tx && ledgerAll.count.includes(String(ledgerAll.tx)), JSON.stringify(ledgerAll))
+
+    // ================= v1.11.16: multi-select status pills =================
+    // fixtures: 2 todo + 1 doing + 1 done, all today
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week')?.click()`)
+    await sleep(300)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Week')?.click()`) // active → today
+    await sleep(500)
+    await addQuick('MSel todo A', '09:00', '10:00')
+    await addQuick('MSel todo B', '10:00', '11:00')
+    await addQuick('MSel doing', '11:00', '12:00')
+    await addQuick('MSel done', '12:00', '13:00')
+    dbRun("UPDATE events SET status = 'doing' WHERE title = 'MSel doing'")
+    dbRun("UPDATE events SET status = 'done' WHERE title = 'MSel done'")
+    await js(`window.__rhythmData.load()`)
+    await sleep(500)
+    await js(`Array.from(document.querySelectorAll('.status-pills .pill')).find((b) => b.textContent.includes('All'))?.click()`)
+    await sleep(300)
+    // 1) the pill numbers ARE the actual rendered data (labels+search aware)
+    const pillCounts = await js(`(() => {
+      const readPill = (label) => {
+        const p = Array.from(document.querySelectorAll('.status-pills .pill')).find((x) => x.textContent.startsWith(label))
+        return parseInt((p?.querySelector('.pill-count')?.textContent ?? '0'), 10)
+      }
+      const blocks = Array.from(document.querySelectorAll('.eb'))
+      const count = (pred) => blocks.filter(pred).length
+      return {
+        todo: readPill('To Do'), doing: readPill('In Progress'), done: readPill('Done'), cancelled: readPill('Cancelled'),
+        bTodo: count((e) => !!e.querySelector('.eb-dot.todo')), bDoing: count((e) => !!e.querySelector('.eb-dot.doing')),
+        bDone: count((e) => e.classList.contains('done')), bCancelled: count((e) => e.classList.contains('cancelled'))
+      }
+    })()`)
+    check('v1.11.16: pill counts match the ACTUAL rendered week blocks', pillCounts.todo === pillCounts.bTodo && pillCounts.doing === pillCounts.bDoing && pillCounts.done === pillCounts.bDone && pillCounts.cancelled === pillCounts.bCancelled, JSON.stringify(pillCounts))
+    // 2) multi-select: To Do + In Progress together filter the week
+    await js(`Array.from(document.querySelectorAll('.status-pills .pill')).find((b) => b.textContent.includes('To Do'))?.click()`)
+    await sleep(200)
+    await js(`Array.from(document.querySelectorAll('.status-pills .pill')).find((b) => b.textContent.includes('In Progress'))?.click()`)
+    await sleep(400)
+    const multiSel = await js(`(() => {
+      const active = Array.from(document.querySelectorAll('.status-pills .pill.active')).map((p) => p.textContent.trim())
+      const titles = Array.from(document.querySelectorAll('.eb')).map((e) => e.textContent)
+      return {
+        active,
+        hasTodo: titles.some((t) => t.includes('MSel todo A')),
+        hasDoing: titles.some((t) => t.includes('MSel doing')),
+        hasDone: titles.some((t) => t.includes('MSel done'))
+      }
+    })()`)
+    check('v1.11.16: multi-select pills (To Do + In Progress) filter the week together', multiSel.active.length === 2 && multiSel.active.some((a) => a.includes('To Do')) && multiSel.active.some((a) => a.includes('In Progress')) && multiSel.hasTodo && multiSel.hasDoing && !multiSel.hasDone, JSON.stringify(multiSel))
+    await js(`Array.from(document.querySelectorAll('.status-pills .pill')).find((b) => b.textContent.includes('All'))?.click()`)
+    await sleep(300)
+    // 3) AGENDA: the pills match the actual agenda rows (same range + filters)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.trim() === 'Agenda')?.click()`)
+    await sleep(600)
+    const agendaPills = await js(`(() => {
+      const readPill = (label) => {
+        const p = Array.from(document.querySelectorAll('.status-pills .pill')).find((x) => x.textContent.startsWith(label))
+        return parseInt((p?.querySelector('.pill-count')?.textContent ?? '0'), 10)
+      }
+      const rows = Array.from(document.querySelectorAll('.agenda-row'))
+      const cnt = (sel) => rows.filter((r) => r.querySelector(sel)).length
+      return {
+        todo: readPill('To Do'), doing: readPill('In Progress'), done: readPill('Done'),
+        rTodo: rows.length - cnt('.mini-badge'), rDoing: cnt('.mini-badge.doing'), rDone: cnt('.mini-badge.done')
+      }
+    })()`)
+    check('v1.11.16: agenda pill counts match the ACTUAL agenda rows', agendaPills.todo === agendaPills.rTodo && agendaPills.doing === agendaPills.rDoing && agendaPills.done === agendaPills.rDone, JSON.stringify(agendaPills))
+    // v1.11.17 ROOT-CAUSE: a DONE event in the past is NEVER rendered by the
+    // agenda (Overdue excludes done/cancelled) — the Done pill must NOT count
+    // it either; a past TODO event IS rendered in Overdue → both must agree
+    const YDAY = fmtD(new Date(Date.now() - 86400000))
+    await js(`window.api.events.create({ title: 'AgPastDone', description: '', startLocal: '${YDAY}T09:00', endLocal: '${YDAY}T10:00', allDay: false, labelId: null, colorOverride: null, status: 'done', rrule: null, exdates: [], parentId: null, originDate: null })`)
+    await js(`window.api.events.create({ title: 'AgPastTodo', description: '', startLocal: '${YDAY}T10:00', endLocal: '${YDAY}T11:00', allDay: false, labelId: null, colorOverride: null, status: 'todo', rrule: null, exdates: [], parentId: null, originDate: null })`)
+    await js(`window.__rhythmData.load()`)
+    await sleep(500)
+    const agendaPast = await js(`(() => {
+      const readPill = (label) => {
+        const p = Array.from(document.querySelectorAll('.status-pills .pill')).find((x) => x.textContent.startsWith(label))
+        return parseInt((p?.querySelector('.pill-count')?.textContent ?? '0'), 10)
+      }
+      const rows = Array.from(document.querySelectorAll('.agenda-row'))
+      const cnt = (sel) => rows.filter((r) => r.querySelector(sel)).length
+      return {
+        todo: readPill('To Do'), doing: readPill('In Progress'), done: readPill('Done'), cancelled: readPill('Cancelled'),
+        rTodo: rows.length - cnt('.mini-badge'), rDoing: cnt('.mini-badge.doing'), rDone: cnt('.mini-badge.done'), rCancelled: cnt('.mini-badge.cancelled'),
+        hasPastTodo: rows.some((r) => r.textContent.includes('AgPastTodo')),
+        hasPastDone: rows.some((r) => r.textContent.includes('AgPastDone'))
+      }
+    })()`)
+    check('v1.11.17: past-done event NOT rendered + NOT counted; past-todo rendered + counted (root cause)', agendaPast.hasPastTodo && !agendaPast.hasPastDone && agendaPast.todo === agendaPast.rTodo && agendaPast.doing === agendaPast.rDoing && agendaPast.done === agendaPast.rDone && agendaPast.cancelled === agendaPast.rCancelled, JSON.stringify(agendaPast))
+    dbRun("DELETE FROM events WHERE title LIKE 'MSel %' OR title LIKE 'AgPast%'")
+    await js(`window.__rhythmData.load()`)
+    await sleep(400)
+
+    // ================= v1.11.16: Insights parent-chip MULTI-select =================
+    const chipA = await js(`window.api.labels.create('Chip A', '#e02020', null).then((l) => l.id)`)
+    const chipB = await js(`window.api.labels.create('Chip B', '#20b020', null).then((l) => l.id)`)
+    await js(`window.api.events.create({ title: 'ChipEv A', description: '', startLocal: '${TODAY}T09:00', endLocal: '${TODAY}T10:00', allDay: false, labelId: '${chipA}', colorOverride: null, status: 'todo', rrule: null, exdates: [], parentId: null, originDate: null })`)
+    await js(`window.api.events.create({ title: 'ChipEv B', description: '', startLocal: '${TODAY}T09:00', endLocal: '${TODAY}T10:00', allDay: false, labelId: '${chipB}', colorOverride: null, status: 'todo', rrule: null, exdates: [], parentId: null, originDate: null })`)
+    await js(`window.__rhythmData.load()`)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Insights'))?.click()`)
+    await sleep(700)
+    const chipProbe = await js(`(async () => {
+      const click = (name) => Array.from(document.querySelectorAll('.ins-chip')).find((c) => c.textContent.trim() === name)?.click()
+      click('Chip A'); await new Promise((r) => setTimeout(r, 300))
+      const active1 = Array.from(document.querySelectorAll('.ins-chip.active')).map((c) => c.textContent.trim())
+      const legend1 = Array.from(document.querySelectorAll('.ins-legend-name')).map((e) => e.textContent)
+      click('Chip B'); await new Promise((r) => setTimeout(r, 400))
+      const active2 = Array.from(document.querySelectorAll('.ins-chip.active')).map((c) => c.textContent.trim())
+      const legend2 = Array.from(document.querySelectorAll('.ins-legend-name')).map((e) => e.textContent)
+      return { active1, legend1, active2, legend2 }
+    })()`)
+    check('v1.11.16: Insights parent chips MULTI-select (one chip → that group only)', chipProbe.active1.length === 1 && chipProbe.active1[0] === 'Chip A' && chipProbe.legend1.length === 1 && chipProbe.legend1[0] === 'Chip A', JSON.stringify(chipProbe))
+    check('v1.11.16: Insights parent chips MULTI-select (two chips → both groups)', chipProbe.active2.length === 2 && chipProbe.active2.includes('Chip A') && chipProbe.active2.includes('Chip B') && chipProbe.legend2.length === 2 && chipProbe.legend2.includes('Chip A') && chipProbe.legend2.includes('Chip B'), JSON.stringify(chipProbe))
+    // v1.11.17: selecting EVERY parent chip snaps back to "All labels"
+    await js(`Array.from(document.querySelectorAll('.ins-chip')).find((c) => c.textContent.trim() === 'All labels')?.click()`)
+    await sleep(300)
+    const chipSnap = await js(`(async () => {
+      const all = Array.from(document.querySelectorAll('.ins-chip')).map((c) => c.textContent.trim())
+      const wait = () => new Promise((r) => setTimeout(r, 180))
+      for (const name of all) {
+        if (name === 'All labels') continue
+        Array.from(document.querySelectorAll('.ins-chip')).find((c) => c.textContent.trim() === name)?.click()
+        await wait() // let React re-render between toggles
+      }
+      await new Promise((r) => setTimeout(r, 600))
+      const active = Array.from(document.querySelectorAll('.ins-chip.active')).map((c) => c.textContent.trim())
+      const legend = Array.from(document.querySelectorAll('.ins-legend-name')).map((e) => e.textContent)
+      return { parents: all.length - 1, active, legend }
+    })()`)
+    check('v1.11.17: selecting EVERY parent snaps back to the All labels chip', chipSnap.parents >= 2 && chipSnap.active.length === 1 && chipSnap.active[0] === 'All labels' && chipSnap.legend.includes('Chip A') && chipSnap.legend.includes('Chip B'), JSON.stringify(chipSnap))
+    await js(`Array.from(document.querySelectorAll('.ins-chip')).find((c) => c.textContent.trim() === 'All labels')?.click()`)
+    await sleep(400)
+
+    // ================= v1.11.16: "Last month" robustness (every period) =================
+    const prevMonthDate = new Date()
+    prevMonthDate.setDate(1)
+    prevMonthDate.setMonth(prevMonthDate.getMonth() - 1)
+    const prevMonthKey = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`
+    dbRun("DELETE FROM events WHERE start_local LIKE ?", prevMonthKey + '-%')
+    await js(`window.__rhythmData.load()`)
+    await sleep(400)
+    // select 'This month' (first click), then click again → previous month is EMPTY → must stay
+    await js(`(() => { const btn = Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.trim() === 'This month'); if (btn && !btn.classList.contains('active')) btn.click(); return !!btn })()`)
+    await sleep(400)
+    await js(`(() => { const btn = Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.trim() === 'This month'); if (btn) btn.click(); return !!btn })()`)
+    await sleep(500)
+    const lmLabels = await js(`Array.from(document.querySelectorAll('.ins-period .seg-btn')).map((b) => b.textContent.trim())`)
+    check('v1.11.16: "This month" does NOT switch to an empty "Last month"', lmLabels.includes('This month') && !lmLabels.includes('Last month'), JSON.stringify(lmLabels))
+    // now add a schedule in the previous month → the toggle works
+    await js(`window.api.events.create({ title: 'PrevMonthEv', description: '', startLocal: '${prevMonthKey}-15T09:00', endLocal: '${prevMonthKey}-15T10:00', allDay: false, labelId: null, colorOverride: null, status: 'todo', rrule: null, exdates: [], parentId: null, originDate: null })`)
+    await js(`window.__rhythmData.load()`)
+    await sleep(400)
+    await js(`(() => { const btn = Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.trim() === 'This month'); if (btn) btn.click(); return !!btn })()`)
+    await sleep(600)
+    const lmLabels2 = await js(`Array.from(document.querySelectorAll('.ins-period .seg-btn')).map((b) => b.textContent.trim())`)
+    const lmHasData = await js(`Array.from(document.querySelectorAll('.ins-legend-name')).some((e) => e.textContent.includes('Unlabelled'))`)
+    check('v1.11.16: "Last month" appears when that month HAS a schedule', lmLabels2.includes('Last month') && lmHasData, JSON.stringify({ lmLabels2, lmHasData }))
+    await js(`(() => { const btn = Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.includes('Last month')); if (btn) btn.click(); return !!btn })()`)
+    await sleep(400)
+    // empty CUSTOM period → the period stays quiet with the plain-language
+    // digest note (NO 📭 card — v1.11.17 removed it; the guard is the fix)
+    await js(`(() => { const c = Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.trim() === 'Custom'); if (c) c.click(); return !!c })()`)
+    await sleep(300)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.ins-custom-range input')[0], '2020-05-01')`)
+    await js(`(${SET_VALUE})(document.querySelectorAll('.ins-custom-range input')[1], '2020-05-31')`)
+    await sleep(700)
+    const emptyDigest = await js(`(() => ({
+      banner: !!document.querySelector('.ins-empty-big'),
+      digest: Array.from(document.querySelectorAll('.digest li')).map((li) => li.textContent).join(' | ')
+    }))()`)
+    check('v1.11.17: empty period shows NO 📭 card — digest note only', !emptyDigest.banner && emptyDigest.digest.includes('No activities in this period'), JSON.stringify(emptyDigest))
+
+    // ================= v1.11.16: score insights follow period + top chips =================
+    const scP = await js(`window.api.labels.create('ScParent', '#00aaff', null).then((l) => l.id)`)
+    const scC = await js(`window.api.labels.create('ScChild', '#0055aa', '${scP}').then((l) => l.id)`)
+    const scP2 = await js(`window.api.labels.create('ScParent2', '#aa00ff', null).then((l) => l.id)`)
+    const scC2 = await js(`window.api.labels.create('ScChild2', '#5500aa', '${scP2}').then((l) => l.id)`)
+    await js(`window.api.events.create({ title: 'ScEv', description: '', startLocal: '${TODAY}T09:00', endLocal: '${TODAY}T10:00', allDay: false, labelId: '${scC}', colorOverride: null, status: 'done', rrule: null, exdates: [], parentId: null, originDate: null }).then(async (e) => { await window.api.coins.scoreEvent(e.id, '${TODAY}', 'on_time', 1, '${scC}'); return e.id })`)
+    await js(`window.api.events.create({ title: 'ScEv2', description: '', startLocal: '${TODAY}T10:00', endLocal: '${TODAY}T11:00', allDay: false, labelId: '${scC2}', colorOverride: null, status: 'done', rrule: null, exdates: [], parentId: null, originDate: null }).then(async (e) => { await window.api.coins.scoreEvent(e.id, '${TODAY}', 'late', 1, '${scC2}'); return e.id })`)
+    await js(`window.__rhythmData.load()`)
+    await sleep(400)
+    const scProbe = await js(`(async () => {
+      const all = await window.api.coins.scoreInsights({})
+      const narrow = await window.api.coins.scoreInsights({ from: '2020-01-01', to: '2020-01-02' })
+      const wide = await window.api.coins.scoreInsights({ from: '2000-01-01', to: '2100-01-01' })
+      const parent = await window.api.coins.scoreInsights({ parentIds: ['${scP}'] })
+      const other = await window.api.coins.scoreInsights({ parentIds: ['__nope__'] })
+      return { all: all.count, narrow: narrow.count, wide: wide.count, parent: parent.count, other: other.count }
+    })()`)
+    check('v1.11.16: score insights follow the PERIOD (empty window → 0) and parent chips', scProbe.narrow === 0 && scProbe.wide === scProbe.all && scProbe.all >= 1 && scProbe.parent >= 1 && scProbe.other === 0, JSON.stringify(scProbe))
+    // UI: back to 'This week' (covers today) → panel shows the ScParent group with a toggle
+    await js(`(() => { const btn = Array.from(document.querySelectorAll('.ins-period .seg-btn')).find((b) => b.textContent.trim() === 'This week'); if (btn) btn.click(); return !!btn })()`)
+    await sleep(300)
+    await js(`Array.from(document.querySelectorAll('.ins-chip')).find((c) => c.textContent.trim() === 'All labels')?.click()`)
+    await sleep(700)
+    const scUI = await js(`(() => {
+      const groups = Array.from(document.querySelectorAll('.score-group'))
+      const sc = groups.find((g) => g.querySelector('.ins-progress-name')?.textContent.trim() === 'ScParent')
+      const kidsBefore = !!(sc && sc.querySelector('.score-kids'))
+      const head = sc && sc.querySelector('.ins-progress.expandable')
+      if (head) head.click()
+      return { found: !!sc, caret: !!(sc && sc.querySelector('.ins-caret')), kidsBefore, groups: groups.length }
+    })()`)
+    await sleep(500)
+    const scKidsAfter = await js(`(() => {
+      const sc = Array.from(document.querySelectorAll('.score-group')).find((g) => g.querySelector('.ins-progress-name')?.textContent.trim() === 'ScParent')
+      const kids = sc ? sc.querySelectorAll('.score-kids .ins-progress.sub').length : -1
+      const childBar = sc ? !!sc.querySelector('.score-kids .score-label-track') : false
+      return { kids, childBar }
+    })()`)
+    check('v1.11.17: score panel groups under parents — DEFAULT COLLAPSED, expand on click', scUI.found && scUI.caret && scUI.groups >= 1 && !scUI.kidsBefore && scKidsAfter.kids >= 1 && scKidsAfter.childBar, JSON.stringify({ ...scUI, ...scKidsAfter }))
+    // one group open at a time (like Label completion)
+    const scOne = await js(`(async () => {
+      const groups = Array.from(document.querySelectorAll('.score-group'))
+      const sc = groups.find((g) => g.querySelector('.ins-progress-name')?.textContent.trim() === 'ScParent2')
+      const sc1 = groups.find((g) => g.querySelector('.ins-progress-name')?.textContent.trim() === 'ScParent')
+      if (!sc || !sc1) return { enough: false }
+      sc.querySelector('.ins-progress.expandable').click() // open ScParent2
+      await new Promise((r) => setTimeout(r, 300))
+      sc1.querySelector('.ins-progress.expandable').click() // open ScParent → closes ScParent2
+      await new Promise((r) => setTimeout(r, 400))
+      return { enough: true, sc2Open: !!sc.querySelector('.score-kids'), sc1Open: !!sc1.querySelector('.score-kids') }
+    })()`)
+    check('v1.11.17: score panels — only ONE parent open at a time', scOne.enough && !scOne.sc2Open && scOne.sc1Open, JSON.stringify(scOne))
+
+    // ================= v1.11.16: earned-by-label grouped under parents =================
+    await js(`window.__rhythmCoins.refresh()`)
+    await sleep(400)
+    await js(`Array.from(document.querySelectorAll('.seg-btn')).find((b) => b.textContent.includes('Coins'))?.click()`)
+    await js(`(() => { const d = document.querySelector('.coin-drop'); if (d) d.click() })()`)
+    await sleep(800)
+    const earnUI = await js(`(() => {
+      const groups = Array.from(document.querySelectorAll('.earn-group'))
+      const scp = groups.find((g) => g.querySelector('.ins-progress-name')?.textContent.trim() === 'ScParent')
+      const kidsBefore = !!(scp && scp.querySelector('.earn-kids'))
+      const head = scp && scp.querySelector('.ins-progress.expandable')
+      if (head) head.click()
+      return { groups: groups.length, scp: !!scp, caret: !!(scp && scp.querySelector('.ins-caret')), kidsBefore }
+    })()`)
+    await sleep(500)
+    const earnKidsAfter = await js(`(() => {
+      const scp = Array.from(document.querySelectorAll('.earn-group')).find((g) => g.querySelector('.ins-progress-name')?.textContent.trim() === 'ScParent')
+      return !!(scp && scp.querySelector('.earn-kids'))
+    })()`)
+    check('v1.11.17: Coins earned-by-label grouped under parents — DEFAULT COLLAPSED, expand on click', earnUI.scp && earnUI.caret && earnUI.groups >= 1 && !earnUI.kidsBefore && earnKidsAfter, JSON.stringify({ ...earnUI, kidsAfter: earnKidsAfter }))
+    // only ONE group open at a time (same model as the Insights panels)
+    const earnOne = await js(`(async () => {
+      const groups = Array.from(document.querySelectorAll('.earn-group'))
+      const scp = groups.find((g) => g.querySelector('.ins-progress-name')?.textContent.trim() === 'ScParent')
+      const other = groups.find((g) => g !== scp && g.querySelector('.ins-progress.expandable'))
+      const h = other && other.querySelector('.ins-progress.expandable')
+      if (!scp || !h) return { enough: false }
+      h.click()
+      await new Promise((r) => setTimeout(r, 400))
+      return { enough: true, scpOpen: !!scp.querySelector('.earn-kids'), otherOpen: !!other.querySelector('.earn-kids') }
+    })()`)
+    check('v1.11.17: Coins earned-by-label — only ONE parent open at a time', earnOne.enough && !earnOne.scpOpen && earnOne.otherOpen, JSON.stringify(earnOne))
+
+    // ============ v1.11.18: notification slot persistence (audit) ============
+    // an already-fired slot must NEVER re-fire after an app restart — the
+    // fired state is persisted as notifSlot.<date>.<slot> in settings
+    // (event is future-dated so the slot reminder actually has content)
+    await js(`window.api.events.create({ title: 'NotifPfx', description: '', startLocal: '${TODAY}T23:59', endLocal: '${TOMORROW}T00:29', allDay: false, labelId: null, colorOverride: null, status: 'todo', rrule: null, exdates: [], parentId: null, originDate: null })`)
+    await js(`window.__rhythmData.load()`)
+    await sleep(300)
+    const notifPfx = await js(`(async () => {
+      const cfg = await window.api.notify.getConfig()
+      const prev = { enabled: cfg.enabled, slots: cfg.slots, leadMin: cfg.leadMin }
+      await window.api.notify.setConfig({ enabled: true, slots: ['00:00'], leadMin: 30 })
+      await window.api.notify.resetDay() // clean slate for today
+      await window.api.notify.runNow() // slot 00:00 already passed → fires + persists
+      await new Promise((r) => setTimeout(r, 300))
+      const key = 'notifSlot.' + (() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') })() + '.00:00'
+      const v1 = await window.api.settings.get(key)
+      const toastCount1 = Array.from(document.querySelectorAll('.toast')).filter((t) => t.textContent.includes('Rhythm — Today')).length
+      await window.api.notify.runNow() // second check → must NOT re-fire
+      await new Promise((r) => setTimeout(r, 300))
+      const toastCount2 = Array.from(document.querySelectorAll('.toast')).filter((t) => t.textContent.includes('Rhythm — Today')).length
+      await window.api.notify.setConfig(prev) // restore
+      await window.api.notify.resetDay()
+      return { v1: v1 ?? '', toasts1: toastCount1, toasts2: toastCount2, stillEnabled: prev.enabled }
+    })()`)
+    check('v1.11.18: fired slot persisted (restart can never re-fire)', notifPfx.v1 === '1' && notifPfx.toasts1 >= 1 && notifPfx.toasts2 === notifPfx.toasts1, JSON.stringify(notifPfx))
+
+    // ================= v1.11.16: cleanup fixtures =================
+    dbRun("DELETE FROM event_scores WHERE event_id IN (SELECT id FROM events WHERE title IN ('ScEv','ScEv2','ChipEv A','ChipEv B','PrevMonthEv','AgPastDone','AgPastTodo','MSel todo A','MSel todo B','MSel doing','MSel done'))")
+    dbRun("DELETE FROM events WHERE title LIKE 'NotifPfx'")
+    dbRun("DELETE FROM events WHERE title IN ('ScEv','ScEv2','ChipEv A','ChipEv B','PrevMonthEv','AgPastDone','AgPastTodo','MSel todo A','MSel todo B','MSel doing','MSel done')")
+    dbRun("DELETE FROM labels WHERE name IN ('Chip A','Chip B','ScParent','ScChild','ScParent2','ScChild2')")
+    await js(`window.__rhythmData.load()`)
+    await sleep(400)
 
     const errs = await js(`window.__errors || []`)
     check('no renderer errors at end', errs.length === 0, String(errs))

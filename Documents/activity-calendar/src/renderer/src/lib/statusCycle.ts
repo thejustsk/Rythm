@@ -95,14 +95,13 @@ export async function cycleOccurrenceStatus(occ: Occurrence): Promise<EventStatu
   //    would hide the new status, switch the filter to All automatically
   //    (with a toast explaining) so the block stays visible.
   const ui = useUi.getState()
-  if (ui.statusFilter !== 'all' && ui.statusFilter !== next) {
-    const label = ui.statusFilter === 'todo' ? 'To Do' : ui.statusFilter === 'doing' ? 'In Progress' : ui.statusFilter === 'done' ? 'Done' : 'Cancelled'
+  if (ui.statusSel.size > 0 && !ui.statusSel.has(next)) {
     useToasts.getState().push({
-      message: `Status changed to ${next} — the "${label}" filter was hiding it, so the filter switched to All.`,
+      message: `Status changed to ${next} — the filter was hiding it, so the filter switched to All.`,
       kind: 'info',
       duration: 4500
     })
-    ui.setStatusFilter('all')
+    ui.setStatusSel(new Set())
   }
   return next
 }

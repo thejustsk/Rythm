@@ -10,7 +10,9 @@ const VIEWS = [
   { id: 'month', label: T.views.month },
   { id: 'agenda', label: T.views.agenda },
   { id: 'insights', label: T.views.insights },
-  { id: 'coins', label: T.coinsName }
+  { id: 'coins', label: T.coinsName },
+  // v1.11.14: trash — dustbin icon only (title carries the meaning)
+  { id: 'trash', label: '🗑️' }
 ] as const
 
 /** Tab icon for a view: coins get the coin (money-flip loop when the Coins tab
@@ -99,8 +101,12 @@ export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
             {VIEWS.map((v) => (
               <button
                 key={v.id}
-                className={`seg-btn${ui.view === v.id ? ' active' : ''}`}
-                onClick={() => ui.setView(v.id)}
+                className={`seg-btn${ui.view === v.id ? ' active' : ''}${ui.view === v.id && isTodayPeriod(v.id, ui.cursor) ? ' today' : ''}`}
+                title={ui.view === v.id ? 'Click again to go to today' : undefined}
+                onClick={() => {
+                  if (ui.view === v.id) ui.goToday()
+                  else ui.setView(v.id)
+                }}
               >
                 <SegIcon id={v.id} active={ui.view === v.id} />
               </button>
@@ -128,7 +134,6 @@ export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
         <button className="icon-btn" title="Next" aria-label="Next" onClick={() => ui.navigate(ui.view === 'month' ? 30 : ui.view === 'week' ? 7 : 1)}>
           <svg viewBox="0 0 16 16" width="14" height="14"><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
-        <button className="btn today-btn" onClick={ui.goToday}>Today</button>
         <div className="tb-title">{titleFor(ui.view, ui.cursor)}</div>
       </div>
 
@@ -137,8 +142,12 @@ export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
           {VIEWS.map((v) => (
             <button
               key={v.id}
-              className={`seg-btn${ui.view === v.id ? ' active' : ''}`}
-              onClick={() => ui.setView(v.id)}
+              className={`seg-btn${ui.view === v.id ? ' active' : ''}${ui.view === v.id && isTodayPeriod(v.id, ui.cursor) ? ' today' : ''}`}
+              title={ui.view === v.id ? 'Click again to go to today' : undefined}
+              onClick={() => {
+                if (ui.view === v.id) ui.goToday()
+                else ui.setView(v.id)
+              }}
             >
               <SegIcon id={v.id} active={ui.view === v.id} />
             </button>
@@ -157,6 +166,22 @@ export default function Toolbar({ minimal = false }: { minimal?: boolean }) {
   )
 }
 
+/** v1.11.15: is the current view's period the one containing today? */
+function isTodayPeriod(view: string, cursor: Date): boolean {
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()) // date-only
+  if (view === 'day') return cursor.toDateString() === today.toDateString()
+  if (view === 'week') {
+    const ws = useUi.getState().weekStart === 'sunday' ? 0 : 1
+    const start = weekStartOf(cursor, ws)
+    const end = new Date(start)
+    end.setDate(start.getDate() + 6)
+    return today >= start && today <= end // date-only comparisons
+  }
+  if (view === 'month') return cursor.getFullYear() === today.getFullYear() && cursor.getMonth() === today.getMonth()
+  return false
+}
+
 function titleFor(view: string, cursor: Date): string {
   const month = cursor.toLocaleString('en-US', { month: 'long' })
   if (view === 'month') return `${month} ${cursor.getFullYear()}`
@@ -170,5 +195,6 @@ function titleFor(view: string, cursor: Date): string {
   }
   if (view === 'insights') return 'Insights'
   if (view === 'coins') return 'Rhythm Coins'
+  if (view === 'trash') return 'Trash'
   return 'Agenda'
 }

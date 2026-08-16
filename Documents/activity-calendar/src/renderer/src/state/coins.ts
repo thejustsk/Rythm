@@ -11,7 +11,7 @@ interface PendingScore {
 export interface CoinStats {
   today: number
   series: Array<{ date: string; amount: number }>
-  perLabel: Array<{ labelId: string | null; labelName: string; amount: number }>
+  perLabel: Array<{ labelId: string | null; labelName: string; parentId: string | null; parentName: string | null; amount: number }>
 }
 
 interface CoinsState {

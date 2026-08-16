@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, nativeTheme, Tray, Menu, nativeImage } from 'electron'
 import { APP_VERSION } from '../shared/version'
 import path from 'node:path'
+import fs from 'node:fs'
 import { openDatabase, getDataDir } from './db/connection'
 import { migrate } from './db/schema'
 import { seedIfEmpty } from './db/seed'
@@ -9,9 +10,38 @@ import { registerLabelHandlers } from './ipc/labels'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerGamifyHandlers } from './ipc/gamify'
 import { registerWindowHandlers } from './ipc/window'
-import { registerNotificationHandlers, startNotifier } from './notify'
+import { registerNotificationHandlers, startNotifier, runRemindOnce } from './notify'
+import { registerTrashHandlers } from './ipc/trash'
+import { runAutoBackup } from './backup'
+import { runSmoke } from './smoke'
 
 const isDev = !app.isPackaged
+
+/** v1.11.17: main-process safety net. If anything ever throws in main, the
+ *  FULL error is written to main-errors.log next to the database (so we can
+ *  always diagnose it) and an in-app toast tells the user — instead of the
+ *  scary native "A JavaScript error occurred" dialog. The app keeps running.
+ *  This replaced the old dynamic `import('./backup')` pattern that could hit
+ *  module-resolution failures in the portable temp folder on reopen. */
+const mainErrorLog = path.join(getDataDir(), 'main-errors.log')
+function logMainError(tag: string, err: unknown): void {
+  try {
+    const line = `[${new Date().toISOString()}] ${tag}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`
+    fs.appendFileSync(mainErrorLog, line)
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) {
+        w.webContents.send('notify:inapp', {
+          title: 'Rhythm note',
+          body: 'Something went wrong in the background. Everything keeps working — details were saved to main-errors.log.'
+        })
+      }
+    }
+  } catch {
+    /* the safety net must never throw */
+  }
+}
+process.on('uncaughtException', (e) => logMainError('uncaughtException', e))
+process.on('unhandledRejection', (e) => logMainError('unhandledRejection', e))
 
 /** v1.11.4: the app keeps running in the SYSTEM TRAY when the window is
  *  closed, so notifications keep firing (slot reminders etc.) even with the
@@ -171,7 +201,9 @@ function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      // v1.11.18 (audit): renderer fully sandboxed — the preload only uses
+      // contextBridge + ipcRenderer, both fully supported in the sandbox
+      sandbox: true
     }
   })
 
@@ -181,7 +213,7 @@ function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
 
   // v1.11.4: closing the window hides it to the tray instead of quitting —
   // notifications stay ON. Quit via the tray menu (or app.quit()).
-  win.on('close', (e) => {
+  win.on('close', async (e) => {
     // harness mode (smoke/screenshot) must be able to quit normally
     if (process.env.AC_SMOKE || process.env.AC_SCREENSHOT) return
     // v1.11.10: in DEV (npm run dev) closing the window QUITS the app so the
@@ -190,19 +222,37 @@ function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
     if (!app.isPackaged) return
     if (!quitting) {
       e.preventDefault()
+      // v1.11.16: SAVE + BACK UP before hiding — nothing is ever lost when
+      // the window closes (WAL checkpoint flushes the write-ahead log, then
+      // a forced backup snapshots the database).
+      if (db) {
+        try {
+          db.pragma('wal_checkpoint(PASSIVE)')
+        } catch { /* non-fatal */ }
+        try {
+          void runAutoBackup(db, true)
+        } catch { /* non-fatal */ }
+      }
       win.hide()
       // tell the user once, via the in-app channel (renders if visible)
       try {
         win.webContents.send('notify:inapp', {
-          title: 'Rhythm stays on',
-          body: 'The window is closed, but Rhythm keeps running in the tray so reminders keep working. Use Quit in the tray to stop it.'
+          title: 'Rhythm stays on — saved & backed up',
+          body: 'Everything is saved. Rhythm keeps running in the tray so reminders keep working. Use Quit in the tray to stop it.'
         })
       } catch { /* window hidden is fine */ }
     }
   })
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    // v1.11.18 (audit): only ever open http(s) links externally — anything
+    // else (file:, javascript:, custom schemes) is denied outright
+    try {
+      const u = new URL(url)
+      if (u.protocol === 'https:' || u.protocol === 'http:') void shell.openExternal(url)
+    } catch {
+      /* malformed — deny */
+    }
     return { action: 'deny' }
   })
 
@@ -268,10 +318,8 @@ function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
       }
       setTimeout(async () => {
         try {
-          const fs = await import('node:fs')
           if (process.env.AC_SMOKE) {
             win.webContents.on('console-message', (_e, _l, message) => console.log('[renderer]', message))
-            const { runSmoke } = await import('./smoke')
             await runSmoke(win, process.env.AC_SMOKE)
             app.quit()
             return
@@ -477,6 +525,21 @@ function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
   return win
 }
 
+// v1.11.14: only ONE app instance — clicking the exe again focuses the open
+// window instead of opening a second one
+const gotSingleLock = app.requestSingleInstanceLock()
+if (!gotSingleLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWin) {
+      if (mainWin.isMinimized()) mainWin.restore()
+      mainWin.show()
+      mainWin.focus()
+    }
+  })
+}
+
 app.whenReady().then(async () => {
   // Windows: notifications need a stable AppUserModelID
   app.setName('Rhythm')
@@ -489,10 +552,9 @@ app.whenReady().then(async () => {
     try {
       const db = openDatabase()
       migrate(db)
-      const { runRemindOnce } = await import('./notify')
       runRemindOnce(db)
     } catch (e) {
-      console.log('[remind] error:', e)
+      logMainError('remind', e)
     }
     setTimeout(() => app.quit(), 4000)
     return
@@ -509,6 +571,7 @@ app.whenReady().then(async () => {
   registerGamifyHandlers(db)
   registerWindowHandlers()
   registerNotificationHandlers(db)
+  registerTrashHandlers(db)
 
   // v1.11.4: Windows — launch at login toggle
   ipcMain.handle('app:getLaunchAtStartup', () => {
@@ -525,11 +588,30 @@ app.whenReady().then(async () => {
   createWindow(db)
   setupTray()
 
-  // M8: automatic daily backup — once at launch, then re-checked every 6h
-  // while the app stays open (so a multi-day session never stops backing up)
-  const { runAutoBackup } = await import('./backup')
-  void runAutoBackup(db)
-  setInterval(() => void runAutoBackup(db), 6 * 3600 * 1000)
+  // M8: automatic backup — once at launch, then re-checked EVERY HOUR while
+  // the app is in use; a forced backup also runs as the app closes (v1.11.14).
+  // v1.11.17: statically imported + protected — a backup hiccup must never
+  // take the app down (this was an unprotected dynamic import before).
+  try {
+    void runAutoBackup(db)
+  } catch (e) {
+    logMainError('startup backup', e)
+  }
+  setInterval(() => {
+    try {
+      void runAutoBackup(db)
+    } catch (e) {
+      logMainError('hourly backup', e)
+    }
+  }, 3600 * 1000)
+  let backupOnCloseDone = false
+  app.on('before-quit', (e) => {
+    if (process.env.AC_SMOKE || process.env.AC_SCREENSHOT) return // harness quits instantly
+    if (backupOnCloseDone) return
+    e.preventDefault()
+    backupOnCloseDone = true
+    void runAutoBackup(db, true).finally(() => app.quit())
+  })
   // B.2: OS notifications — morning summary (first time on each day) + slot reminders
   startNotifier(db)
 

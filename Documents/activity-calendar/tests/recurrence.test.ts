@@ -183,3 +183,72 @@ describe('iteration safety', () => {
     expect(isoDate(addDays(d(2026, 8, 31), 1))).toBe('2026-09-01')
   })
 })
+
+describe('v1.11.18 fast-forward (audit #5)', () => {
+  const fromIso = (iso: string) => new Date(iso + 'T00:00:00')
+
+  it('DAILY: iterating from a later date yields exactly the same set', () => {
+    const r = parseRRule('FREQ=DAILY;UNTIL=2026-12-31')!
+    const full = dates(iterateRule(r, d(2026, 1, 1)))
+    const fast = dates(iterateRule(r, d(2026, 1, 1), fromIso('2026-08-01')))
+    expect(fast).toEqual(full.filter((x) => x >= '2026-08-01'))
+    expect(fast.length).toBeGreaterThan(100) // still the whole tail, not truncated
+  })
+
+  it('DAILY with BYDAY: filtered subset identical', () => {
+    const r = parseRRule('FREQ=DAILY;BYDAY=MO,WE,FR')!
+    const full = dates(iterateRule(r, d(2026, 1, 1)))
+    const fast = dates(iterateRule(r, d(2026, 1, 1), fromIso('2026-08-01')))
+    expect(fast).toEqual(full.filter((x) => x >= '2026-08-01'))
+  })
+
+  it('WEEKLY with BYDAY from mid-week: the containing week is NOT skipped', () => {
+    const r = parseRRule('FREQ=WEEKLY;BYDAY=MO,WE,FR')!
+    const full = dates(iterateRule(r, d(2026, 8, 1))) // Sat
+    // from = Wednesday 2026-08-12 → Friday 08-14 must still appear
+    const fast = dates(iterateRule(r, d(2026, 8, 1), fromIso('2026-08-12')))
+    expect(fast).toEqual(full.filter((x) => x >= '2026-08-12'))
+    expect(fast).toContain('2026-08-14')
+  })
+
+  it('WEEKLY INTERVAL=2: aligned to the interval', () => {
+    const r = parseRRule('FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,FR')!
+    const full = dates(iterateRule(r, d(2026, 1, 1)))
+    const fast = dates(iterateRule(r, d(2026, 1, 1), fromIso('2026-05-01')))
+    expect(fast).toEqual(full.filter((x) => x >= '2026-05-01'))
+  })
+
+  it('MONTHLY: subset identical', () => {
+    const r = parseRRule('FREQ=MONTHLY;BYMONTHDAY=15')!
+    const full = dates(iterateRule(r, d(2025, 1, 15)))
+    const fast = dates(iterateRule(r, d(2025, 1, 15), fromIso('2026-03-01')))
+    expect(fast).toEqual(full.filter((x) => x >= '2026-03-01'))
+  })
+
+  it('YEARLY: subset identical', () => {
+    const r = parseRRule('FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=14')!
+    const full = dates(iterateRule(r, d(2020, 3, 14)))
+    const fast = dates(iterateRule(r, d(2020, 3, 14), fromIso('2024-01-01')))
+    expect(fast).toEqual(full.filter((x) => x >= '2024-01-01'))
+  })
+
+  it('from before the series start → identical to no fast-forward', () => {
+    const r = parseRRule('FREQ=DAILY')!
+    const full = dates(iterateRule(r, d(2026, 8, 10))).slice(0, 5)
+    const fast = dates(iterateRule(r, d(2026, 8, 10), fromIso('2026-01-01'))).slice(0, 5)
+    expect(fast).toEqual(full)
+  })
+
+  it('from beyond UNTIL → empty', () => {
+    const r = parseRRule('FREQ=DAILY;UNTIL=2026-08-15')!
+    expect(dates(iterateRule(r, d(2026, 1, 1), fromIso('2026-09-01')))).toEqual([])
+  })
+
+  it('COUNT rules are NEVER fast-forwarded (count stays exact)', () => {
+    const r = parseRRule('FREQ=DAILY;COUNT=3')!
+    const withFrom = dates(iterateRule(r, d(2026, 8, 10), fromIso('2026-08-30')))
+    const without = dates(iterateRule(r, d(2026, 8, 10)))
+    expect(withFrom).toEqual(without) // identical — no jump
+    expect(withFrom).toEqual(['2026-08-10', '2026-08-11', '2026-08-12'])
+  })
+})

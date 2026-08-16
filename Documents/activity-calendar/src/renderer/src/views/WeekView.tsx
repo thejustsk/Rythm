@@ -4,7 +4,7 @@ import { useToasts } from '@/state/toasts'
 import { computeOccurrences, occurrencesForDay } from '@/engine/occurrences'
 import type { Occurrence } from '@/engine/occurrences'
 import { startOfDay, addDays } from '@/engine/recurrence'
-import { blockBox, blockBoxForDay, layoutClusters, snap15, snap15Rel, toMinutes, minutesToHM, localFromDayMinutes, relMinFrom, dayRelMins, DAY_MINUTES, PX_PER_MIN } from '@/lib/timegrid'
+import { blockBox, blockBoxForDay, layoutClusters, snap15, snap15Rel, toMinutes, minutesToHM, localFromDayMinutes, relMinFrom, dayRelMins, DAY_MINUTES, PX_PER_MIN, setGridZoom } from '@/lib/timegrid'
 import EventBlock from '@/components/EventBlock'
 import { useEdgeNav } from '@/lib/edgeNav'
 import { matchesSearch } from '@/lib/search'
@@ -31,6 +31,8 @@ interface Props {
 /** Shared hour-grid: one column per day (WeekView) or a single column (DayView). */
 export default function WeekView({ days }: Props) {
   const ui = useUi()
+  // v1.11.14: apply the Ctrl+P vertical zoom to the shared px-per-minute
+  setGridZoom(ui.gridZoom)
   const { events, labels } = useData()
   const gridRef = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -53,11 +55,11 @@ export default function WeekView({ days }: Props) {
       const lid = o.event.labelId ?? ''
       if (lid && !vis.has(lid)) return false
       if (!lid && hidden.size > 0) return false // no label + filter active → hide
-      if (ui.statusFilter !== 'all' && o.event.status !== ui.statusFilter) return false
+      if (ui.statusSel.size > 0 && !ui.statusSel.has(o.event.status)) return false
       if (!matchesSearch(o.event, labels, ui.search)) return false
       return true
     })
-  }, [occs, ui.hiddenLabels, ui.statusFilter, ui.search, labels])
+  }, [occs, ui.hiddenLabels, ui.statusSel, ui.search, labels])
 
   const now = new Date()
   const nowMin = toMinutes(now)
@@ -271,8 +273,11 @@ export default function WeekView({ days }: Props) {
     window.addEventListener('keydown', onKey)
   }
 
+  // v1.11.15: levelled zoom levels — min 1x (full day in one window), max 4x
+  const ZOOM_LEVELS = [1, 1.5, 2, 3, 4]
+  // v1.11.15: at 2x+ show HOURLY lines; below keep the current bi-hourly
   const hourLabels: number[] = []
-  for (let h = 0; h <= 24; h += 2) hourLabels.push(h)
+  for (let h = 0; h <= 24; h += ui.gridZoom >= 2 ? 1 : 2) hourLabels.push(h)
 
   // Settings → General: start the grid scrolled at the configured hour (and
   // re-scroll live when the pref changes while the view is open)
@@ -280,7 +285,26 @@ export default function WeekView({ days }: Props) {
     const el = gridRef.current
     if (!el) return
     el.scrollTop = ui.dayStartHour * 60 * PX_PER_MIN
-  }, [ui.dayStartHour])
+  }, [ui.dayStartHour, ui.gridZoom])
+
+  // v1.11.15: Ctrl + scroll wheel zooms the grid (levelled, 1x..4x) — the
+  // browser's page zoom is prevented so only the grid scales vertically
+  useEffect(() => {
+    const el = gridRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return
+      e.preventDefault()
+      const levels = [1, 1.5, 2, 3, 4]
+      const cur = useUi.getState().gridZoom
+      const i = levels.indexOf(cur)
+      const next = e.deltaY < 0 ? levels[Math.min(levels.length - 1, (i < 0 ? 0 : i) + 1)] : levels[Math.max(0, (i < 0 ? 1 : i) - 1)]
+      useUi.getState().setGridZoom(next)
+      useToasts.getState().push({ message: `Grid zoom ${next}×`, kind: 'info', duration: 1200 })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
 
   // Apple-style edge scrolling: at the bottom a hard scroll up pulls the next
   // day/week; at the top a hard scroll down pulls the previous one.
@@ -321,7 +345,7 @@ export default function WeekView({ days }: Props) {
             const isToday = key === todayKey
             const isCursor = key === iso(ui.cursor)
             return (
-              <div key={key} className={`week-day-head${isToday ? ' today' : ''}${isCursor ? ' cursor' : ''}`} onClick={() => ui.setCursor(d)}>
+              <div key={key} className={`week-day-head${isToday ? ' today' : ''}${isCursor ? ' cursor' : ''}`} title="Open this day" onClick={() => { ui.setCursor(d); ui.setView('day') }}>
                 <span className="wd-name">{d.toLocaleDateString('en-US', { weekday: 'short' })}</span>
                 <span className={`wd-num${isToday ? ' today' : ''}`}>{d.getDate()}</span>
               </div>

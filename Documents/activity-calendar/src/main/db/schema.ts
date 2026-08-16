@@ -1,24 +1,28 @@
 import type { Db } from './connection'
 
 export function migrate(db: Db): void {
-  // safe migration: add refunded_at to event_scores for older databases
-  try {
-    const cols = db.prepare('PRAGMA table_info(event_scores)').all() as Array<{ name: string }>
-    if (!cols.some((c) => c.name === 'refunded_at')) {
-      db.exec('ALTER TABLE event_scores ADD COLUMN refunded_at TEXT')
+  // v1.11.14: run the whole migration inside a transaction so a failure can
+  // never leave the schema half-applied. Every statement is idempotent
+  // (IF NOT EXISTS / guarded ALTERs), so re-running is always safe.
+  db.transaction(() => {
+    // safe migration: add refunded_at to event_scores for older databases
+    try {
+      const cols = db.prepare('PRAGMA table_info(event_scores)').all() as Array<{ name: string }>
+      if (!cols.some((c) => c.name === 'refunded_at')) {
+        db.exec('ALTER TABLE event_scores ADD COLUMN refunded_at TEXT')
+      }
+    } catch {
+      // table may not exist yet on a brand-new DB — the CREATE below handles it
     }
-  } catch {
-    // table may not exist yet on a brand-new DB — the CREATE below handles it
-  }
-  try {
-    const tcols = db.prepare('PRAGMA table_info(coin_transactions)').all() as Array<{ name: string }>
-    if (!tcols.some((c) => c.name === 'refunded_at')) {
-      db.exec('ALTER TABLE coin_transactions ADD COLUMN refunded_at TEXT')
+    try {
+      const tcols = db.prepare('PRAGMA table_info(coin_transactions)').all() as Array<{ name: string }>
+      if (!tcols.some((c) => c.name === 'refunded_at')) {
+        db.exec('ALTER TABLE coin_transactions ADD COLUMN refunded_at TEXT')
+      }
+    } catch {
+      // brand-new DB — handled by CREATE
     }
-  } catch {
-    // brand-new DB — handled by CREATE
-  }
-  db.exec(`
+    db.exec(`
     CREATE TABLE IF NOT EXISTS labels (
       id         TEXT PRIMARY KEY,
       name       TEXT NOT NULL,
@@ -88,5 +92,15 @@ export function migrate(db: Db): void {
       achieved_at TEXT,
       created_at  TEXT NOT NULL
     );
+
+    -- v1.11.14: trash — deleted events kept for restore. payload = JSON
+    -- { master: CalendarEvent, children?: CalendarEvent[] }.
+    CREATE TABLE IF NOT EXISTS trash (
+      id         TEXT PRIMARY KEY,
+      payload    TEXT NOT NULL,
+      deleted_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_trash_deleted ON trash(deleted_at);
   `)
+  })()
 }

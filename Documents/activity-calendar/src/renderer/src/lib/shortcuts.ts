@@ -12,8 +12,8 @@
  * Safe: ignores keystrokes while typing in inputs, and navigation keys while
  * a dialog is open.
  */
-import { useUi } from '@/state/store'
-import { useData } from '@/state/store'
+import { useUi, useData } from '@/state/store'
+import { useToasts } from '@/state/toasts'
 
 /** The shortcut list — shared by the Settings → Shortcuts tab (v1.11.4). */
 export const SHORTCUT_ROWS: Array<{ keys: string[]; label: string }> = [
@@ -23,6 +23,8 @@ export const SHORTCUT_ROWS: Array<{ keys: string[]; label: string }> = [
   { keys: ['T'], label: 'Jump to today' },
   { keys: ['←', '→'], label: 'Previous / next day' },
   { keys: ['Shift', '←', '→'], label: 'Previous / next week' },
+  { keys: ['Ctrl', 'Scroll'], label: 'Zoom the Day/Week grid (1× – 4×)' },
+  { keys: ['Ctrl', 'P'], label: 'Zoom the Day/Week grid (alternate)' },
   { keys: ['?'], label: 'Open Settings → Shortcuts' },
   { keys: ['Esc'], label: 'Close dialogs' }
 ]
@@ -57,14 +59,19 @@ export function installShortcuts(): () => void {
       // Esc already closes dialogs via their own handlers; nothing extra here
       return
     }
+    if (isTyping(e)) return
+
+    const dialogOpen = !!ui.editorKey || !!ui.quickAdd || ui.settingsOpen || ui.coinSystemConfirm || !!document.querySelector('.score-prompt')
+    // v1.11.18 (audit): '?' must respect the SAME guards as every other
+    // shortcut — typing a literal '?' into a title/search field must never
+    // open Settings mid-sentence. When Settings is already open it just
+    // switches to the Shortcuts tab.
     if (key === '?') {
+      if (dialogOpen && !ui.settingsOpen) return
       ui.openSettings('shortcuts')
       e.preventDefault()
       return
     }
-    if (isTyping(e)) return
-
-    const dialogOpen = !!ui.editorKey || !!ui.quickAdd || ui.settingsOpen || ui.coinSystemConfirm || !!document.querySelector('.score-prompt')
     if (dialogOpen) return
 
     if (key === 'c') {
@@ -79,6 +86,16 @@ export function installShortcuts(): () => void {
     if (key === 't') {
       e.preventDefault()
       ui.goToday()
+      return
+    }
+    // v1.11.14: Ctrl+P cycles the day/week grid VERTICAL zoom
+    if (e.ctrlKey && key === 'p') {
+      e.preventDefault()
+      const levels = [1, 1.35, 1.75, 2.2]
+      const cur = ui.gridZoom
+      const next = levels[(levels.indexOf(cur) + 1) % levels.length] ?? 1.35
+      ui.setGridZoom(next)
+      useToasts.getState().push({ message: `Grid zoom ${next.toFixed(2).replace(/\.?0+$/, '')}×`, kind: 'info', duration: 1500 })
       return
     }
     if (key === 'ArrowLeft' || key === 'ArrowRight') {

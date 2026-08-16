@@ -66,6 +66,28 @@ function clearGroup(
   delete nextP[parentId]
 }
 
+/** v1.11.14: should the "All" (reset) chip next to the Labels header show?
+ *  Show it whenever there is a PARTIAL selection — hidden only when either
+ *  NOTHING is selected or EVERYTHING is selected (every group fully green,
+ *  i.e. nothing is actually filtered). */
+export function shouldShowAllChip(
+  labels: Label[],
+  hidden: Set<string>,
+  phases: Record<string, Phase>
+): boolean {
+  const parents = labels.filter((l) => !l.parentId)
+  const anySelection = Object.keys(phases).length > 0 || hidden.size > 0
+  if (!anySelection) return false
+  // "all selected" = every parent group is fully green (nothing filtered)
+  const allGreen = parents.every((p) => {
+    const phase = phases[p.id]
+    if (phase !== 'green') return false
+    const kids = childrenOf(labels, p.id)
+    return kids.every((k) => !hidden.has(k.id))
+  })
+  return !allGreen
+}
+
 /** Click a label row → next selection state. Pure & unit-tested. */
 export function clickLabel(
   labels: Label[],

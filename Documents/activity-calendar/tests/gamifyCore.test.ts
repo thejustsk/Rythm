@@ -4,7 +4,8 @@ import {
   CHECKIN_BASE, ALL_DONE_BONUS, PERFECT_WEEK_BONUS,
   defaultMilestoneCosts, perfectWeekCheck, perfectMonthCheck, dayResolved,
   weekKey, monthKey, streakMilestoneLevelsUpTo,
-  defaultStreakCosts, streakMilestoneLevel, streakMilestoneReward, streakWindow
+  defaultStreakCosts, streakMilestoneLevel, streakMilestoneReward, streakWindow,
+  roundCoins
 } from '../src/main/gamifyCore'
 
 describe('checkInState', () => {
@@ -33,6 +34,21 @@ describe('checkInState', () => {
     const r = checkInState(null, 0, '2026-08-11')
     expect(r.award).toBe(true)
     expect(r.streak).toBe(1)
+  })
+  it('v1.11.18: a FUTURE lastCheckIn (clock moved backward) never re-awards', () => {
+    const r = checkInState('2026-08-12', 4, '2026-08-11')
+    expect(r.award).toBe(false)
+    expect(r.amount).toBe(0)
+    expect(r.streak).toBe(4) // streak untouched — never reset by a tampered clock
+  })
+})
+
+describe('roundCoins (v1.11.18 shared rounding)', () => {
+  it('rounds to 2 decimals', () => {
+    expect(roundCoins(10.005)).toBe(10.01)
+    expect(roundCoins(10)).toBe(10)
+    expect(roundCoins(0.1 + 0.2)).toBe(0.3)
+    expect(roundCoins(-1.234)).toBe(-1.23)
   })
 })
 

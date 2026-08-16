@@ -5,7 +5,7 @@ import {
   checkInState, allDoneCheck, weekKey, weekStartIso,
   addDaysIso, isoD, ALL_DONE_BONUS, PERFECT_WEEK_BONUS, PERFECT_MONTH_BONUS,
   perfectWeekCheck, perfectMonthCheck, streakMilestoneLevelsUpTo,
-  defaultMilestoneCosts, streakMilestoneReward
+  defaultMilestoneCosts, streakMilestoneReward, roundCoins
 } from '../gamifyCore'
 import { parseRRule, iterateRule, isoDate } from '../../renderer/src/engine/recurrence'
 
@@ -65,7 +65,6 @@ function computeStreak(db: Db): number {
       g.planned++
       if (status === 'done') g.done++
       gDay.set(iso, g)
-      if (!earliest || iso < earliest) earliest = iso
     }
     if (e.rrule) {
       const rule = parseRRule(e.rrule)
@@ -81,6 +80,11 @@ function computeStreak(db: Db): number {
       if (iso > today) continue
       add(iso, ovMap.get(iso) ?? e.status)
     }
+  }
+  // earliest event day — computed from the map (visible to CFA, same result)
+  earliest = null
+  for (const iso of Array.from(gDay.keys())) {
+    if (!earliest || iso < earliest) earliest = iso
   }
   let streak = 0
   for (let i = 0; i < 2000; i++) {
@@ -423,7 +427,7 @@ export function registerGamifyHandlers(db: Db): void {
       const delta = t.type === 'spend' || t.type === 'refund' ? -t.amount : t.amount
       byLocalDate.set(key, (byLocalDate.get(key) ?? 0) + delta)
     }
-    const net = (date: string) => Math.round((byLocalDate.get(date) ?? 0) * 100) / 100
+    const net = (date: string) => roundCoins(byLocalDate.get(date) ?? 0)
     const series = []
     for (let i = 6; i >= 0; i--) {
       const date = addDaysIso(today, -i)
@@ -442,14 +446,24 @@ export function registerGamifyHandlers(db: Db): void {
         perLabelMap.set(t.label_id ?? null, (perLabelMap.get(t.label_id ?? null) ?? 0) + delta)
       }
     }
-    const labels = db.prepare('SELECT id, name FROM labels').all() as Array<{ id: string; name: string }>
-    const perLabel: Array<{ labelId: string | null; labelName: string; amount: number }> = []
+    // v1.11.16: include parent info so the Coins view can group the rows
+    // under their parent labels with expand/collapse toggles
+    const labels = db.prepare('SELECT id, name, parent_id FROM labels').all() as Array<{ id: string; name: string; parent_id: string | null }>
+    const perLabel: Array<{ labelId: string | null; labelName: string; parentId: string | null; parentName: string | null; amount: number }> = []
     for (const [id, amount] of perLabelMap.entries()) {
       if (amount === 0) continue
-      perLabel.push({ labelId: id, labelName: id ? (labels.find((l) => l.id === id)?.name ?? '?') : 'No label', amount: Math.round(amount * 100) / 100 })
+      const lb = id ? labels.find((l) => l.id === id) : undefined
+      const parent = lb?.parent_id ? labels.find((l) => l.id === lb.parent_id) : undefined
+      perLabel.push({
+        labelId: id,
+        labelName: id ? (lb?.name ?? '?') : 'No label',
+        parentId: parent ? parent.id : null,
+        parentName: parent ? parent.name : null,
+        amount: roundCoins(amount)
+      })
     }
     if (rewards !== 0) {
-      perLabel.push({ labelId: '__rewards__', labelName: 'Rewards 🏆', amount: Math.round(rewards * 100) / 100 })
+      perLabel.push({ labelId: '__rewards__', labelName: 'Rewards 🏆', parentId: null, parentName: null, amount: roundCoins(rewards) })
     }
     perLabel.sort((a, b) => b.amount - a.amount)
     return { today: net(today), series, perLabel }
@@ -648,6 +662,78 @@ export function registerGamifyHandlers(db: Db): void {
       .get() as { b: number }
     return { ok: true, balance: nb }
   })
+
+  /** v1.11.15/16: score insights — on-time / late / off-schedule patterns,
+   *  overall and BY LABEL (excludes refunded scores). v1.11.16: scoped to a
+   *  PERIOD ([from, to) ISO dates by occurrence date) and/or a selection of
+   *  PARENT labels (their children included) — the Insights top chips. */
+  ipcMain.handle(
+    'coins:scoreInsights',
+    (_e, opts: { from?: string; to?: string; parentIds?: string[] } = {}) => {
+      const { from, to, parentIds = [] } = opts ?? {}
+      const where = ['s.refunded_at IS NULL']
+      const params: string[] = []
+      if (from) {
+        where.push('s.origin_date >= ?')
+        params.push(from)
+      }
+      if (to) {
+        where.push('s.origin_date < ?')
+        params.push(to)
+      }
+      if (parentIds.length > 0) {
+        const ph = parentIds.map(() => '?').join(',')
+        where.push(`((l.parent_id IN (${ph})) OR (l.id IN (${ph})))`)
+        params.push(...parentIds, ...parentIds)
+      }
+      const rows = db.prepare(`
+        SELECT s.score_type, s.origin_date, e.label_id, l.name AS label_name, l.parent_id, pl.name AS parent_name,
+               l.color AS label_color, pl.color AS parent_color
+        FROM event_scores s
+        LEFT JOIN events e ON e.id = s.event_id
+        LEFT JOIN labels l ON l.id = e.label_id
+        LEFT JOIN labels pl ON pl.id = l.parent_id
+        WHERE ${where.join(' AND ')}
+      `).all(...params) as Array<{
+        score_type: string
+        label_id: string | null
+        label_name: string | null
+        parent_id: string | null
+        parent_name: string | null
+        label_color: string | null
+        parent_color: string | null
+      }>
+      const total = { on_time: 0, late: 0, off_schedule: 0 }
+      const byLabel = new Map<string, { labelId: string | null; name: string; parentId: string | null; parentName: string | null; color: string | null; on_time: number; late: number; off_schedule: number }>()
+      for (const r of rows) {
+        const k = r.score_type as keyof typeof total
+        if (k in total) total[k]++
+        const labelKey = r.label_id ?? 'none'
+        let entry = byLabel.get(labelKey)
+        if (!entry) {
+          const name = r.label_name ?? r.parent_name ?? 'No label'
+          entry = {
+            labelId: r.label_id,
+            name,
+            parentId: r.parent_id,
+            parentName: r.parent_name,
+            color: r.label_color ?? r.parent_color ?? null,
+            on_time: 0,
+            late: 0,
+            off_schedule: 0
+          }
+          byLabel.set(labelKey, entry)
+        }
+        if (k in entry) entry[k]++
+      }
+      const n = rows.length
+      const labels = [...byLabel.values()]
+        .map((l) => ({ ...l, total: l.on_time + l.late + l.off_schedule }))
+        .filter((l) => l.total > 0)
+        .sort((a, b) => b.total - a.total)
+      return { total, labels, count: n }
+    }
+  )
 
   ipcMain.handle('coins:balance', () => {
     const r = db

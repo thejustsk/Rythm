@@ -98,12 +98,12 @@ export async function backupNow(db: Db): Promise<BackupResult> {
 }
 
 /** Run at app start: backs up once per 24h when auto-backup is enabled. */
-export async function runAutoBackup(db: Db): Promise<void> {
+export async function runAutoBackup(db: Db, force = false): Promise<void> {
   try {
     const auto = db.prepare("SELECT value FROM settings WHERE key = 'autoBackup'").get() as { value: string } | undefined
     if (auto && auto.value === '0') return
     const last = db.prepare("SELECT value FROM settings WHERE key = 'lastBackup'").get() as { value: string } | undefined
-    if (last && Date.now() - new Date(last.value).getTime() < 24 * 3600 * 1000) return
+    if (!force && last && Date.now() - new Date(last.value).getTime() < 24 * 3600 * 1000) return
     const res = await backupNow(db)
     console.log('[backup] auto backup:', res.ok ? 'created ' + res.path : 'failed', '· stored', res.count)
     if (!res.ok) notifyInApp('Rhythm — Backup failed', 'Automatic backup could not be created. Check disk space / permissions (Settings → About → Back up now).')

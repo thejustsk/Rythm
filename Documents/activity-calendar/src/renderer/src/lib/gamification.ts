@@ -26,38 +26,26 @@ export function baseCoins(minutes: number): number {
 
 /** coins earned for a completion: base × score multiplier, rounded to 2 dp */
 export function computeEarn(minutes: number, score: ScoreType): number {
-  return Math.round(baseCoins(minutes) * SCORE_MULT[score] * 100) / 100
+  return roundCoins(baseCoins(minutes) * SCORE_MULT[score])
 }
 
 /** ledger-derived balance (never stored) */
 export function balanceFromTxs(earns: number, spends: number): number {
-  return Math.round((earns - spends) * 100) / 100
+  return roundCoins(earns - spends)
 }
 
 export function fmtCoins(n: number): string {
-  const r = Math.round(n * 100) / 100
+  const r = roundCoins(n)
   return Number.isInteger(r) ? String(r) : r.toFixed(2)
 }
 
-/** Streak-milestone path: 5, 10, 20, 30, 50, 75, then +25 forever. */
-export function streakCosts(count: number): number[] {
-  const base = [5, 10, 20, 30, 50, 75]
-  const out: number[] = []
-  let prev = 75
-  for (let i = 0; i < count; i++) {
-    if (i < base.length) out.push(base[i])
-    else {
-      prev += 25
-      out.push(prev)
-    }
-  }
-  return out
-}
-
-/** Streak-milestone reward = milestone value × 2. */
-export function streakMilestoneReward(level: number): number {
-  return level * 2
-}
+/** v1.11.18 (audit): the streak-milestone COST/REWARD tables were hand-copied
+ *  between the renderer and the main process — a drift risk. They now come
+ *  from ONE source (gamifyCore) and are re-exported here so every existing
+ *  importer keeps working. */
+import { defaultStreakCosts, streakMilestoneReward, roundCoins } from '../../../main/gamifyCore'
+const streakCosts = defaultStreakCosts // local alias (single source of truth)
+export { streakCosts, streakMilestoneReward, roundCoins }
 
 /** The 4-stone window: recently-hit stone is the 2nd (1st for the first milestone). */
 export function streakWindow(streak: number): { stones: number[]; hitIndex: number; nextIndex: number } {

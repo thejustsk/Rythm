@@ -97,22 +97,41 @@ function dayMatches(rule: RRule, day: Date): boolean {
 /**
  * Yields the occurrence *dates* (start-of-day) of a series, in order,
  * honouring COUNT/UNTIL. Guaranteed to terminate.
+ * `from` (optional) fast-forwards the iteration to the first interval
+ * overlapping that date — used by the views so a 3-year-old daily series
+ * doesn't re-walk ~1000 days for every render (v1.11.18, audit #5). The
+ * yielded SET is identical to iterating from the start (intersecting filters
+ * are applied by the caller); COUNT series are never fast-forwarded so the
+ * count cap stays exact.
  */
-export function* iterateRule(rule: RRule, seriesStart: Date): Generator<Date> {
+export function* iterateRule(rule: RRule, seriesStart: Date, from?: Date): Generator<Date> {
   const start = startOfDay(seriesStart)
   const untilMs = rule.until ? new Date(rule.until + 'T00:00:00').getTime() : Infinity
+  // COUNT rules are NEVER fast-forwarded — the count cap must count matches
+  // from the series START, so `from` is ignored entirely for them
+  const fromMs = from && !rule.count ? startOfDay(from).getTime() : 0
   let emitted = 0
 
   const yieldIfMatch = (day: Date): boolean => {
     if (day.getTime() < start.getTime()) return false
+    if (fromMs && day.getTime() < fromMs) return false
     if (!dayMatches(rule, day)) return false
     if (day.getTime() > untilMs) return false
     emitted++
     return true
   }
 
+  // fast-forward helper (v1.11.18): first interval index that can contain a
+  // day >= `from` — FLOOR so the interval overlapping `from` is never skipped
+  // (the caller filters partial overlaps). COUNT rules stay exact → no jump.
+  const idx0 = (numerator: number, denom: number): number => {
+    if (!from || rule.count) return 0
+    return Math.max(0, Math.floor(numerator / denom))
+  }
+
   if (rule.freq === 'DAILY') {
-    for (let k = 0; k < MAX_ITERATIONS; k++) {
+    const k0 = idx0(from ? from.getTime() - start.getTime() : 0, 86400000 * rule.interval)
+    for (let k = k0; k < MAX_ITERATIONS; k++) {
       const day = addDays(start, k * rule.interval)
       if (day.getTime() > untilMs) break
       if (yieldIfMatch(day)) yield day
@@ -123,9 +142,9 @@ export function* iterateRule(rule: RRule, seriesStart: Date): Generator<Date> {
 
   if (rule.freq === 'WEEKLY') {
     const anchor = mondayOf(start)
-    const startWeek = Math.floor((start.getTime() - anchor.getTime()) / 86400000 / 7)
     const byday = rule.byday ? [...rule.byday].sort((a, b) => WEEKDAY_INDEX[a] - WEEKDAY_INDEX[b]) : null
-    for (let w = 0; w < MAX_ITERATIONS; w++) {
+    const w0 = idx0(from ? from.getTime() - anchor.getTime() : 0, 7 * 86400000 * rule.interval)
+    for (let w = w0; w < MAX_ITERATIONS; w++) {
       const weekStart = addDays(anchor, w * 7 * rule.interval)
       if (weekStart.getTime() > untilMs) break
       if (byday) {
@@ -147,7 +166,11 @@ export function* iterateRule(rule: RRule, seriesStart: Date): Generator<Date> {
 
   if (rule.freq === 'MONTHLY') {
     const months = rule.bymonthday ?? [start.getDate()]
-    for (let k = 0; k < MAX_ITERATIONS; k++) {
+    const k0 = idx0(
+      from ? from.getFullYear() * 12 + from.getMonth() - (start.getFullYear() * 12 + start.getMonth()) : 0,
+      rule.interval
+    )
+    for (let k = k0; k < MAX_ITERATIONS; k++) {
       // compute target year/month without day-overflow (Jan 31 + 1 month must stay in Feb)
       const totalMonths = start.getFullYear() * 12 + start.getMonth() + k * rule.interval
       const year = Math.floor(totalMonths / 12)
@@ -169,7 +192,8 @@ export function* iterateRule(rule: RRule, seriesStart: Date): Generator<Date> {
   // YEARLY
   const months = rule.bymonth ?? [start.getMonth() + 1]
   const days = rule.bymonthday ?? [start.getDate()]
-  for (let k = 0; k < MAX_ITERATIONS; k++) {
+  const k0 = idx0(from ? from.getFullYear() - start.getFullYear() : 0, rule.interval)
+  for (let k = k0; k < MAX_ITERATIONS; k++) {
     const year = start.getFullYear() + k * rule.interval
     for (const month1 of [...months].sort((a, b) => a - b)) {
       const dim = daysInMonth(year, month1 - 1)

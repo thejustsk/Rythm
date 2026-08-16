@@ -33,11 +33,11 @@ export default function MonthView() {
       const lid = o.event.labelId ?? ''
       if (lid && !vis.has(lid)) return false
       if (!lid && hidden.size > 0) return false
-      if (ui.statusFilter !== 'all' && o.event.status !== ui.statusFilter) return false
+      if (ui.statusSel.size > 0 && !ui.statusSel.has(o.event.status)) return false
       if (!matchesSearch(o.event, labels, ui.search)) return false
       return true
     })
-  }, [occs, ui.hiddenLabels, ui.statusFilter, ui.search, labels])
+  }, [occs, ui.hiddenLabels, ui.statusSel, ui.search, labels])
 
   const today = startOfDay(new Date())
   const MAX_CHIPS = 3
@@ -73,7 +73,12 @@ export default function MonthView() {
       <div className="month-body" ref={gridRef}>
         <div className="month-gutter">
           {weekNums.map((w, r) => (
-            <div key={r} className="month-wknum" title={`ISO week ${w}`}>
+            <div
+              key={r}
+              className="month-wknum"
+              title={`Open week ${w}`}
+              onClick={() => { ui.setCursor(cells[r * 7]); ui.setView('week') }}
+            >
               {w}
             </div>
           ))}
@@ -92,7 +97,13 @@ export default function MonthView() {
                 className={`day-cell${isToday ? ' today' : ''}${isCursor ? ' cursor' : ''}${other ? ' dim' : ''}`}
                 onClick={() => ui.openQuickAdd(iso(day), '09:00')}
               >
-                <div className="day-num">{day.getDate()}</div>
+                <div
+                className="day-num"
+                title="Open this day"
+                onClick={(e) => { e.stopPropagation(); ui.setCursor(day); ui.setView('day') }}
+              >
+                {day.getDate()}
+              </div>
                 <div className="day-chips" onClick={(e) => e.stopPropagation()}>
                   {shown.map((o) => (
                     <EventBlock key={o.key} occ={o} compact onClick={() => ui.openEditor(o.eventId, o.originDate)} />

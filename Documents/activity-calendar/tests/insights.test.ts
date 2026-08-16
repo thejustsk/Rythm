@@ -338,6 +338,24 @@ describe('topLabelId filter (parent-label insights)', () => {
     const ins = computeInsights(events, labels, new Set(), range('2026-08-10', 2).start, range('2026-08-10', 2).end, 'fit')
     expect(ins.plannedMin).toBe(60)
   })
+  it('v1.11.16: accepts a SET of top labels (multi-select chips)', () => {
+    const labels = [
+      lbl('fit', 'Fitness', '#10B981'),
+      lbl('gym', 'Gym', '#F97316', 'fit'),
+      lbl('work', 'Work', '#3B82F6'),
+      lbl('study', 'Study', '#AF52DE')
+    ]
+    const events = [
+      ev('g', '2026-08-10T09:00', '2026-08-10T10:00', { labelId: 'gym' }),
+      ev('w', '2026-08-10T10:00', '2026-08-10T11:00', { labelId: 'work' }),
+      ev('s', '2026-08-10T11:00', '2026-08-10T12:00', { labelId: 'study' })
+    ]
+    const ins = computeInsights(events, labels, new Set(), range('2026-08-10', 2).start, range('2026-08-10', 2).end, new Set(['fit', 'work']))
+    expect(ins.plannedMin).toBe(120)
+    expect(ins.perLabel.map((p) => p.name).sort()).toEqual(['Fitness', 'Work'])
+    expect(ins.digest[0]).toContain('Fitness')
+    expect(ins.digest[0]).toContain('Work')
+  })
 })
 
 describe('childStats (sublabel details)', () => {

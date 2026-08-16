@@ -1,11 +1,12 @@
 import { useMemo } from 'react'
-import { useData, useUi, iso, visibleLabelIds } from '@/state/store'
+import { useData, useUi, visibleLabelIds } from '@/state/store'
 import { computeOccurrences } from '@/engine/occurrences'
 import { addDays, startOfDay } from '@/engine/recurrence'
 import { resolveEventColor } from '@/lib/colors'
 import { daysBetween } from '@/lib/timegrid'
 import { matchesSearch } from '@/lib/search'
 import { fmtClock } from '@/lib/clock'
+import { buildAgendaGroups } from '@/lib/agenda'
 
 /** Agenda: grouped list — Overdue / Today / Tomorrow / This week / Later. */
 export default function AgendaView() {
@@ -25,34 +26,15 @@ export default function AgendaView() {
       const lid = o.event.labelId ?? ''
       if (lid && !vis.has(lid)) return false
       if (!lid && hidden.size > 0) return false
-      if (ui.statusFilter !== 'all' && o.event.status !== ui.statusFilter) return false
+      if (ui.statusSel.size > 0 && !ui.statusSel.has(o.event.status)) return false
       if (!matchesSearch(o.event, labels, ui.search)) return false
       return true
     })
 
-    const g = (name: string, dayOffsetFrom: number, dayOffsetTo: number) => {
-      const from = addDays(today, dayOffsetFrom)
-      const to = addDays(today, dayOffsetTo + 1)
-      // INCLUDE an event whenever ANY part (full or partial) falls inside the
-      // group's days — multi-day events appear in every day they touch
-      return filtered
-        .filter((o) => o.start.getTime() < to.getTime() && o.end.getTime() > from.getTime())
-        .sort((a, b) => a.start.getTime() - b.start.getTime())
-    }
-
-    const overdue = g('Overdue', -14, -1).filter((o) => o.event.status !== 'done' && o.event.status !== 'cancelled')
-    const todayGroup = g('Today', 0, 0)
-    const tomorrowGroup = g('Tomorrow', 1, 1)
-    const weekGroup = g('This week', 2, 7)
-    const laterGroup = g('Later', 8, 45)
-    return [
-      { name: 'Overdue', items: overdue },
-      { name: 'Today', items: todayGroup },
-      { name: 'Tomorrow', items: tomorrowGroup },
-      { name: 'This week', items: weekGroup },
-      { name: 'Later', items: laterGroup }
-    ].filter((grp) => grp.items.length > 0)
-  }, [events, labels, ui.hiddenLabels, ui.statusFilter, ui.search])
+    // v1.11.17: the SHARED grouping — identical to the one the status-pill
+    // counters use, so the numbers always match the rendered rows
+    return buildAgendaGroups(filtered, today)
+  }, [events, labels, ui.hiddenLabels, ui.statusSel, ui.search])
 
   return (
     <div className="agenda-view">
