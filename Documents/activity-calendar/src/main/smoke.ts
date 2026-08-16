@@ -2241,10 +2241,10 @@ const getDT = (rootSel: string, idx: number) =>
     const promptDuringIntro = await js(`!!document.querySelector('.coin-drop') && !document.querySelector('.reward-batch')`)
     check('reward prompt does NOT appear during the intro', promptDuringIntro)
     const introVer = await js(`document.querySelector('.intro-word-ver')?.textContent ?? ''`)
-    check('intro shows version tag (build identification)', introVer.includes('v1.11.8'), introVer)
+    check('intro shows version tag (build identification)', introVer.includes('v1.11.11'), introVer)
     const titleVer = await js(`document.querySelector('.titlebar-title')?.textContent ?? ''`)
     const sideVer = await js(`document.querySelector('.sidebar-version')?.textContent ?? ''`)
-    check('v1.11.3: title bar shows the build version', titleVer.includes('v1.11.8'), titleVer)
+    check('v1.11.3: title bar shows the build version', titleVer.includes('v1.11.11'), titleVer)
     check('v1.11.4: sidebar has no version footer', !sideVer, String(sideVer))
     // v1.10.6: the coin system is named "Rhythm Coins" everywhere
     const naming = await js(`(() => {
@@ -2260,6 +2260,25 @@ const getDT = (rootSel: string, idx: number) =>
     const sideToday = await js(`document.querySelector('.today-card')?.textContent ?? ''`)
     check('v1.11.4: today card shows "N events · Xh planned · N done"', /\d+ events?/.test(sideToday) && sideToday.includes('planned') && /\d+ done/.test(sideToday), sideToday)
     // v1.11.6: label rows show the filter-meaning badge (only this / all sub-tags)
+    const infoBtn = await js(`!!document.querySelector('.labels-info-btn')`)
+    check('v1.11.9: labels header has an ℹ info button', infoBtn)
+    await js(`document.querySelector('.labels-info-btn')?.click()`)
+    await sleep(250)
+    const infoPop = await js(`(() => {
+      const pop = document.querySelector('.labels-info-pop')
+      return {
+        text: (pop?.textContent ?? '').includes('main label only') && (pop?.textContent ?? '').includes('sub labels only'),
+        closeBtn: !!pop?.querySelector('.labels-info-close')
+      }
+    })()`)
+    check('v1.11.9: info popover explains the 4 colours + has a close button', infoPop.text && infoPop.closeBtn)
+    // v1.11.10: popover closes via its × button
+    await js(`document.querySelector('.labels-info-close')?.click()`)
+    await sleep(200)
+    const infoClosed = await js(`!document.querySelector('.labels-info-pop')`)
+    check('v1.11.10: info popover closes with the × button', infoClosed)
+    await js(`document.querySelector('.labels-info-btn')?.click()`)
+    await sleep(200)
     const labelRows = await js(`(() => {
       const rows = Array.from(document.querySelectorAll('.label-row'))
       const parent = rows.find((r) => r.textContent.includes('Work'))
@@ -2270,17 +2289,34 @@ const getDT = (rootSel: string, idx: number) =>
     await sleep(300)
     const labelBadge1 = await js(`(() => {
       const p = Array.from(document.querySelectorAll('.label-row')).find((r) => r.textContent.includes('Work'))
-      return { badge: p ? (p.querySelector('.lb-badge')?.textContent ?? '') : '' }
+      const b = p ? p.querySelector('.lb-badge') : null
+      const name = p ? p.querySelector('.label-name') : null
+      const cs = b ? getComputedStyle(b) : null
+      const nr = name ? name.getBoundingClientRect() : null
+      const br = b ? b.getBoundingClientRect() : null
+      return {
+        badge: b?.textContent ?? '',
+        subLine: b?.classList.contains('sub-line') ?? false,
+        bg: cs ? cs.backgroundColor : '',
+        borderW: cs ? cs.borderTopWidth : '',
+        radius: cs ? cs.borderRadius : '',
+        belowName: nr && br ? br.top >= nr.bottom - 1 : false,
+        nowrap: cs ? cs.whiteSpace : ''
+      }
     })()`)
     await js(`(() => { const p = Array.from(document.querySelectorAll('.label-row')).find((r) => r.textContent.includes('Work')); if (p) p.click(); return !!p })()`)
     await sleep(300)
     const labelBadge2 = await js(`(() => {
       const p = Array.from(document.querySelectorAll('.label-row')).find((r) => r.textContent.includes('Work'))
-      return { badge: p ? (p.querySelector('.lb-badge')?.textContent ?? '') : '' }
+      const b = p ? p.querySelector('.lb-badge') : null
+      return { badge: b?.textContent ?? '', subLine: b?.classList.contains('sub-line') ?? false }
     })()`)
     await js(`(() => { const p = Array.from(document.querySelectorAll('.label-row')).find((r) => r.textContent.includes('Work')); if (p) p.click(); return !!p })()`)
     await sleep(300)
-    check('v1.11.6: label filter shows meaning badges (only this → all sub-tags)', labelRows.ok && labelBadge1.badge.includes('only') && labelBadge2.badge.includes('all'), JSON.stringify({ b1: labelBadge1.badge, b2: labelBadge2.badge }))
+    check('v1.11.9: label badges standardised (main label only → all)', labelRows.ok && labelBadge1.badge.includes('main label only') && labelBadge2.badge.includes('all'), JSON.stringify({ b1: labelBadge1.badge, b2: labelBadge2.badge }))
+    check('v1.11.10: non-all tag sits BELOW the main label (sub-line); "all" stays inline', labelBadge1.subLine && !labelBadge2.subLine, JSON.stringify({ b1: labelBadge1, b2: labelBadge2 }))
+    // v1.11.11: uniform pill style (same border + radius + single line below the name)
+    check('v1.11.11: parent tag is a uniform pill, ONE line (nowrap), below the name', labelBadge1.bg !== '' && labelBadge1.borderW === '1px' && labelBadge1.radius === '999px' && labelBadge1.belowName && labelBadge1.nowrap === 'nowrap', JSON.stringify(labelBadge1))
     // v1.11.7: TRUE multi-select — selecting a parent must HIDE other groups
     // 1) "only this" (1 click): Work events hidden, Fitness' own visible
     const fitnessRow = await js(`(() => {

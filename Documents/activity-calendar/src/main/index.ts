@@ -178,11 +178,16 @@ function createWindow(db?: ReturnType<typeof openDatabase>): BrowserWindow {
   win.once('ready-to-show', () => win.show())
   mainWin = win
 
+
   // v1.11.4: closing the window hides it to the tray instead of quitting —
   // notifications stay ON. Quit via the tray menu (or app.quit()).
   win.on('close', (e) => {
     // harness mode (smoke/screenshot) must be able to quit normally
     if (process.env.AC_SMOKE || process.env.AC_SCREENSHOT) return
+    // v1.11.10: in DEV (npm run dev) closing the window QUITS the app so the
+    // terminal returns to the prompt. The tray keep-alive is only for the
+    // packaged app (reminders need it); in dev it just hangs the terminal.
+    if (!app.isPackaged) return
     if (!quitting) {
       e.preventDefault()
       win.hide()
@@ -532,6 +537,8 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  // v1.11.4: keep running in the tray (notifications stay on) unless quitting
-  if (quitting && process.platform !== 'darwin') app.quit()
+  // v1.11.10: quit when the window is really gone — always in dev (so the
+  // terminal returns), and in the packaged app only after an explicit Quit
+  // (the tray keeps the packaged app alive for reminders otherwise)
+  if (process.platform !== 'darwin' && (quitting || !app.isPackaged)) app.quit()
 })

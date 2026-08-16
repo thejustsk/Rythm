@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useData, useUi, hiddenLabelIds } from '@/state/store'
 import { clickLabel, deriveParentPhase, type Phase } from '@/lib/labelSelect'
 import { useToasts } from '@/state/toasts'
@@ -25,6 +25,21 @@ export default function Sidebar() {
   const [addingSub, setAddingSub] = useState<string | null>(null)
   const [subName, setSubName] = useState('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [labelsInfo, setLabelsInfo] = useState(false)
+  const labelsInfoBtnRef = useRef<HTMLButtonElement>(null)
+  const labelsInfoPopRef = useRef<HTMLDivElement>(null)
+  // close the popover on outside click (the ℹ button itself toggles)
+  useEffect(() => {
+    if (!labelsInfo) return
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (labelsInfoBtnRef.current?.contains(t)) return
+      if (labelsInfoPopRef.current?.contains(t)) return
+      setLabelsInfo(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [labelsInfo])
   const [renameValue, setRenameValue] = useState('')
   const [paletteFor, setPaletteFor] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
@@ -60,24 +75,29 @@ export default function Sidebar() {
     // parents: colour DERIVED from the real hidden set (never disagrees)
     return ui.labelPhases[l.id] ? deriveParentPhase(labels, hidden, l.id) : null
   }
-  /** v1.11.8: badge text per colour — amber "only this", yellow "some
-   *   sub-tags", blue "children only", green "all sub-tags", lone "on". */
+  /** v1.11.9: tag text per colour (standardised):
+   *   amber = "main label only", yellow = "main + few sub labels",
+   *   blue = "sub labels only", green = "all". */
   const badgeFor = (l: Label): string | null => {
     if (l.parentId) return phaseFor(l) === 'green' ? 'on' : null
     const phase = phaseFor(l)
     if (!phase) return null
     const kids = labels.filter((c) => c.parentId === l.id)
     if (kids.length === 0) return 'on'
-    if (phase === 'amber') return 'only this'
-    if (phase === 'yellow') return 'some sub-tags'
-    if (phase === 'blue') return 'children only'
-    return 'all sub-tags'
+    if (phase === 'amber') return 'main label only'
+    if (phase === 'yellow') return 'main + few sub labels'
+    if (phase === 'blue') return 'sub labels only'
+    return 'all'
   }
 
+  /** v1.11.9: glyph per colour — amber: tick (main only); yellow: tick inside
+   *   the dot (main + some subs); blue: plus (subs only); green: tick (all). */
   const glyphFor = (l: Label): 'tick' | 'plus' | null => {
     const phase = phaseFor(l)
+    if (phase === 'amber') return 'tick'
+    if (phase === 'yellow') return 'tick'
+    if (phase === 'blue') return 'plus'
     if (phase === 'green') return 'tick'
-    if (phase === 'saffron' || phase === 'blue') return 'plus'
     return null
   }
 
@@ -226,16 +246,21 @@ export default function Sidebar() {
             onBlur={() => void commitRename(l)}
           />
         ) : (
-          <>
+          <span className="lb-text">
             <span className="label-name" title="Double-click to rename" onDoubleClick={() => startRename(l)}>
               {l.name}
             </span>
-            {badgeFor(l) && (
-              <span className={`lb-badge ${badgeFor(l).replace(/ /g, '-')}`}>
+            {badgeFor(l) && !sub && badgeFor(l) !== 'all' && (
+              <span className={`lb-badge sub-line ${badgeFor(l).replace(/ /g, '-')}`}>
                 {badgeFor(l)}
               </span>
             )}
-          </>
+          </span>
+        )}
+        {badgeFor(l) && (sub || badgeFor(l) === 'all') && (
+          <span className={`lb-badge ${badgeFor(l).replace(/ /g, '-')}`}>
+            {badgeFor(l)}
+          </span>
         )}
         <span className="label-actions">
           <button className="la-btn" title="Rename" onClick={(e) => { e.stopPropagation(); startRename(l) }}>
@@ -299,7 +324,28 @@ export default function Sidebar() {
       <div className="side-section grow">
         <div className="side-title-row">
           <div className="side-title">Labels</div>
-          <div className="labels-hint">Click: <b className="lh-amber">amber</b> only this · <b className="lh-yellow">yellow</b> this + some sub-tags · <b className="lh-blue">blue</b> sub-tags only · <b className="lh-green">green</b> all sub-tags · empty = off. Groups combine (multi-select).</div>
+          <button
+            type="button"
+            ref={labelsInfoBtnRef}
+            className="labels-info-btn"
+            title="What the label colours mean"
+            aria-label="What the label colours mean"
+            onClick={() => setLabelsInfo((o) => !o)}
+          >
+            ℹ️
+          </button>
+          {labelsInfo && (
+            <div className="labels-info-pop" ref={labelsInfoPopRef}>
+              <button type="button" className="labels-info-close" title="Close" aria-label="Close" onClick={() => setLabelsInfo(false)}>
+                ✕
+              </button>
+              <div><i className="li-dot li-amber" /> <b>amber</b> — main label only</div>
+              <div><i className="li-dot li-yellow" /> <b>yellow</b> — main + few sub labels</div>
+              <div><i className="li-dot li-blue" /> <b>blue</b> — sub labels only</div>
+              <div><i className="li-dot li-green" /> <b>green</b> — all (main + every sub label)</div>
+              <div className="li-note">Click a label to cycle its state. Multiple labels combine (multi-select). Empty = off.</div>
+            </div>
+          )}
           {ui.hiddenLabels.size > 0 && (
             <button className="all-chip" onClick={() => ui.setHiddenLabels([])}>
               All

@@ -282,39 +282,105 @@
 /* selected = green tick; partial parent = blue plus (no red crosses) */
 .lb-check.tick { opacity: 1; background: var(--green); border-color: var(--green); color: #fff; }
 .lb-check.plus { opacity: 1; background: var(--accent); border-color: var(--accent); color: #fff; }
+/* amber tick = main label only (amber filled, tick inside) */
+.label-row.sel-amber .lb-check { opacity: 1; background: #ff9933; border-color: #ff9933; color: #fff; }
+.label-row.sel-amber .lb-check svg { stroke-width: 2; }
+/* v1.11.10: yellow = FILLED yellow dot with a tick (main + few sub labels) */
+.label-row.sel-yellow .lb-check { opacity: 1; background: #ffd60a; border-color: #ffd60a; color: #5b4b00; }
+.label-row.sel-yellow .lb-check svg { stroke-width: 2; }
 /* cup 3 label selection colours — saffron (#FF9933) / green / blue */
 .label-row.sel-amber .lb-check { opacity: 1; background: #ff9933; border-color: #ff9933; color: #fff; }
 .label-row.sel-amber .label-name { color: #d97706; font-weight: 600; }
-.label-row.sel-yellow .lb-check { opacity: 1; background: #ffd60a; border-color: #ffd60a; color: #5b4b00; }
 .label-row.sel-yellow .label-name { color: #b58900; font-weight: 600; }
 .label-row.sel-green .lb-check { opacity: 1; background: var(--green); border-color: var(--green); color: #fff; }
 /* v1.11.6: filter-meaning badges on selected label rows */
 .lb-badge {
   margin-left: auto;
+  flex: none;
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.3px;
   padding: 1px 7px;
   border-radius: 999px;
   text-transform: uppercase;
-  flex: none;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.lb-badge.only-this { background: rgba(255, 153, 51, 0.22); color: #ff9933; }
-.lb-badge.some-sub-tags { background: rgba(255, 214, 10, 0.22); color: #b58900; }
-.lb-badge.children-only { background: rgba(10, 132, 255, 0.2); color: var(--accent); }
-.lb-badge.all-sub-tags { background: rgba(52, 199, 89, 0.2); color: var(--green); }
-.lb-badge.on { background: rgba(52, 199, 89, 0.2); color: var(--green); }
-.labels-hint {
-  font-size: 10px;
+/* v1.11.11: the parent tag sits on its OWN clean single line below the name */
+.lb-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.lb-badge.sub-line {
+  margin-left: 0;
+  align-self: flex-start;
+  margin-top: 2px;
+  max-width: 100%;
+}
+/* UNIFORM tag style — same pill, same alpha, subtle border; only the hue
+   changes per state (yellow no longer looks different) */
+.lb-badge.main-label-only { background: rgba(255, 153, 51, 0.16); color: #e08600; border: 1px solid rgba(255, 153, 51, 0.45); }
+.lb-badge.main-few-sub-labels { background: rgba(255, 214, 10, 0.16); color: #a67c00; border: 1px solid rgba(255, 214, 10, 0.5); }
+.lb-badge.sub-labels-only { background: rgba(10, 132, 255, 0.14); color: var(--accent); border: 1px solid rgba(10, 132, 255, 0.45); }
+.lb-badge.all { background: rgba(52, 199, 89, 0.14); color: var(--green); border: 1px solid rgba(52, 199, 89, 0.45); }
+.lb-badge.on { background: rgba(52, 199, 89, 0.14); color: var(--green); border: 1px solid rgba(52, 199, 89, 0.45); }
+.side-title-row { display: flex; align-items: center; gap: 6px; }
+.labels-info-btn {
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px;
+  opacity: 0.7;
+  filter: grayscale(1);
+  transition: opacity 0.12s ease, transform 0.1s ease;
+}
+.labels-info-btn:hover { opacity: 1; transform: scale(1.15); }
+.side-section.grow { position: relative; }
+.labels-info-pop {
+  position: absolute;
+  top: 22px;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  box-sizing: border-box;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px 10px 26px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-2);
+  font-size: 11.5px;
+  color: var(--text-2);
+  overflow-wrap: break-word;
+}
+.labels-info-pop div { display: inline-flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.labels-info-pop .li-note { margin-top: 4px; font-size: 10.5px; color: var(--text-3); }
+.labels-info-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
   color: var(--text-3);
-  line-height: 1.5;
-  padding: 0 6px;
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
 }
-.labels-hint b { font-weight: 700; }
-.lh-amber { color: #ff9933; }
-.lh-yellow { color: #d9b000; }
-.lh-blue { color: var(--accent); }
-.lh-green { color: var(--green); }
+.labels-info-close:hover { background: var(--surface-3); color: var(--text); }
+.li-dot { width: 11px; height: 11px; border-radius: 50%; flex: none; }
+.li-amber { background: #ff9933; }
+.li-yellow { background: #ffd60a; }
+.li-blue { background: var(--accent); }
+.li-green { background: var(--green); }
 .label-row.sel-blue .lb-check { opacity: 1; background: var(--accent); border-color: var(--accent); color: #fff; }
 .label-row.sel-blue .label-name { color: var(--accent); font-weight: 600; }
 .lb-check.tick svg,
