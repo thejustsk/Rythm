@@ -282,17 +282,21 @@
 /* selected = green tick; partial parent = blue plus (no red crosses) */
 .lb-check.tick { opacity: 1; background: var(--green); border-color: var(--green); color: #fff; }
 .lb-check.plus { opacity: 1; background: var(--accent); border-color: var(--accent); color: #fff; }
-/* amber tick = main label only (amber filled, tick inside) */
+/* v1.11.13: ALL four state circles are UNIFORM — filled hue + WHITE glyph.
+   amber = main only, yellow = main + few subs, blue = subs only, green = all.
+   (The old yellow used a DARK tick #5b4b00 while every other state used a
+   white tick — that inconsistency was the 'yellow looks different' bug.) */
 .label-row.sel-amber .lb-check { opacity: 1; background: #ff9933; border-color: #ff9933; color: #fff; }
 .label-row.sel-amber .lb-check svg { stroke-width: 2; }
-/* v1.11.10: yellow = FILLED yellow dot with a tick (main + few sub labels) */
-.label-row.sel-yellow .lb-check { opacity: 1; background: #ffd60a; border-color: #ffd60a; color: #5b4b00; }
+.label-row.sel-yellow .lb-check { opacity: 1; background: #ffd60a; border-color: #ffd60a; color: #fff; }
 .label-row.sel-yellow .lb-check svg { stroke-width: 2; }
-/* cup 3 label selection colours — saffron (#FF9933) / green / blue */
-.label-row.sel-amber .lb-check { opacity: 1; background: #ff9933; border-color: #ff9933; color: #fff; }
+.label-row.sel-blue .lb-check { opacity: 1; background: var(--accent); border-color: var(--accent); color: #fff; }
+.label-row.sel-blue .lb-check svg { stroke-width: 2; }
+.label-row.sel-green .lb-check { opacity: 1; background: var(--green); border-color: var(--green); color: #fff; }
 .label-row.sel-amber .label-name { color: #d97706; font-weight: 600; }
 .label-row.sel-yellow .label-name { color: #b58900; font-weight: 600; }
-.label-row.sel-green .lb-check { opacity: 1; background: var(--green); border-color: var(--green); color: #fff; }
+.label-row.sel-blue .label-name { color: var(--accent); font-weight: 600; }
+.label-row.sel-green .label-name { color: var(--green); font-weight: 600; }
 /* v1.11.6: filter-meaning badges on selected label rows */
 .lb-badge {
   margin-left: auto;
@@ -310,19 +314,35 @@
 }
 /* v1.11.11: the parent tag sits on its OWN clean single line below the name */
 .lb-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+/* v1.11.13: the tag is its OWN full-width line BELOW the name — it may expand
+   past the buttons' column (the row wraps), so the name + buttons stay clean
+   on the first line and the tag always has room on the second */
 .lb-badge.sub-line {
   margin-left: 0;
   align-self: flex-start;
-  margin-top: 2px;
-  max-width: 100%;
+  margin-top: 3px;
+  max-width: none;
+  width: fit-content;
 }
+/* actions stay pinned to the NAME line (top-right), never pushed down */
+.label-actions { align-self: flex-start; margin-top: 0; }
 /* UNIFORM tag style — same pill, same alpha, subtle border; only the hue
    changes per state (yellow no longer looks different) */
-.lb-badge.main-label-only { background: rgba(255, 153, 51, 0.16); color: #e08600; border: 1px solid rgba(255, 153, 51, 0.45); }
-.lb-badge.main-few-sub-labels { background: rgba(255, 214, 10, 0.16); color: #a67c00; border: 1px solid rgba(255, 214, 10, 0.5); }
-.lb-badge.sub-labels-only { background: rgba(10, 132, 255, 0.14); color: var(--accent); border: 1px solid rgba(10, 132, 255, 0.45); }
-.lb-badge.all { background: rgba(52, 199, 89, 0.14); color: var(--green); border: 1px solid rgba(52, 199, 89, 0.45); }
-.lb-badge.on { background: rgba(52, 199, 89, 0.14); color: var(--green); border: 1px solid rgba(52, 199, 89, 0.45); }
+/* v1.11.12: ONE shared pill — same background, same 1px border, same font;
+   only the border + text HUE communicates the state */
+.lb-badge.main-label-only,
+.lb-badge.main-few-sub-labels,
+.lb-badge.sub-labels-only,
+.lb-badge.all,
+.lb-badge.on {
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  color: var(--text-2);
+}
+.lb-badge.main-label-only { border-color: rgba(255, 153, 51, 0.7); color: #e08600; }
+.lb-badge.main-few-sub-labels { border-color: rgba(214, 180, 10, 0.7); color: #a67c00; }
+.lb-badge.sub-labels-only { border-color: rgba(10, 132, 255, 0.7); color: var(--accent); }
+.lb-badge.all, .lb-badge.on { border-color: rgba(52, 199, 89, 0.7); color: var(--green); }
 .side-title-row { display: flex; align-items: center; gap: 6px; }
 .labels-info-btn {
   border: 0;

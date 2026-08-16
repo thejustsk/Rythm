@@ -525,9 +525,11 @@ app.whenReady().then(async () => {
   createWindow(db)
   setupTray()
 
-  // M8: automatic daily backup (once per 24h, when enabled)
+  // M8: automatic daily backup — once at launch, then re-checked every 6h
+  // while the app stays open (so a multi-day session never stops backing up)
   const { runAutoBackup } = await import('./backup')
   void runAutoBackup(db)
+  setInterval(() => void runAutoBackup(db), 6 * 3600 * 1000)
   // B.2: OS notifications — morning summary (first time on each day) + slot reminders
   startNotifier(db)
 

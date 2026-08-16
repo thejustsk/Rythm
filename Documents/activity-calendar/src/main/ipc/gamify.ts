@@ -282,7 +282,9 @@ export function registerGamifyHandlers(db: Db): void {
     if (!coinsEnabled()) return { award: false, amount: 0 }
     const occs = occurrencesOn(db, originDate)
     const planned = occs.length
-    const resolved = occs.filter((o) => o.status === 'done' || o.status === 'cancelled').length
+    // v1.11.12: cancelled does NOT count as resolved — a day where you
+    // cancelled everything is not "all done" (matches streak/perfect rules)
+    const resolved = occs.filter((o) => o.status === 'done').length
     if (!allDoneCheck(planned, resolved)) return { award: false, amount: 0 }
     const already = db
       .prepare("SELECT 1 FROM coin_transactions WHERE type = 'bonus' AND reason = 'All done' AND origin_date = ?")

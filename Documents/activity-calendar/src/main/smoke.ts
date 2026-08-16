@@ -2241,10 +2241,10 @@ const getDT = (rootSel: string, idx: number) =>
     const promptDuringIntro = await js(`!!document.querySelector('.coin-drop') && !document.querySelector('.reward-batch')`)
     check('reward prompt does NOT appear during the intro', promptDuringIntro)
     const introVer = await js(`document.querySelector('.intro-word-ver')?.textContent ?? ''`)
-    check('intro shows version tag (build identification)', introVer.includes('v1.11.11'), introVer)
+    check('intro shows version tag (build identification)', introVer.includes('v1.11.13'), introVer)
     const titleVer = await js(`document.querySelector('.titlebar-title')?.textContent ?? ''`)
     const sideVer = await js(`document.querySelector('.sidebar-version')?.textContent ?? ''`)
-    check('v1.11.3: title bar shows the build version', titleVer.includes('v1.11.11'), titleVer)
+    check('v1.11.3: title bar shows the build version', titleVer.includes('v1.11.13'), titleVer)
     check('v1.11.4: sidebar has no version footer', !sideVer, String(sideVer))
     // v1.10.6: the coin system is named "Rhythm Coins" everywhere
     const naming = await js(`(() => {

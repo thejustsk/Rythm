@@ -3,7 +3,6 @@ import {
   morningSummary,
   slotReminder,
   startupReminder,
-  SLOT_WINDOW_MIN,
   fmtReminder
 } from '../src/main/notifyCore'
 
@@ -27,35 +26,37 @@ describe('morningSummary', () => {
   })
 })
 
-describe('slotReminder', () => {
+describe('slotReminder (v1.11.13 — lists ALL pending today)', () => {
   const now = new Date(2026, 7, 14, 9, 0)
-  it('reminds for events starting within 2h of the slot (10:00 → slot 09:00)', () => {
-    const r = slotReminder([occ('Deep work', 10)], now, now)
+  it('lists every pending event of the day (not just the next 2h)', () => {
+    const r = slotReminder([occ('Deep work', 10), occ('Lunch', 13), occ('Gym', 18)], now, now)
     expect(r).not.toBeNull()
-    expect(r!.title).toBe('Rhythm — Upcoming')
-    expect(r!.body).toContain('Deep work')
-    expect(r!.body).toContain('10:00')
-    expect(r!.body).toContain('60 min')
+    expect(r!.title).toBe('Rhythm — Today')
+    expect(r!.body).toContain('3 activities left today')
+    expect(r!.body).toContain('10:00 Deep work')
+    expect(r!.body).toContain('13:00 Lunch')
+    expect(r!.body).toContain('18:00 Gym')
   })
-  it('combines multiple events with "and N more"', () => {
-    const r = slotReminder([occ('A', 10), occ('B', 10, 30)], now, now)
-    expect(r!.body).toContain('and 1 more')
-  })
-  it('ignores events further than 2h after the slot', () => {
-    const r = slotReminder([occ('A', 12)], now, now)
-    expect(r).toBeNull()
+  it('events further than 2h away ARE included (the 2h window is gone)', () => {
+    const r = slotReminder([occ('A', 18)], now, now)
+    expect(r).not.toBeNull()
+    expect(r!.body).toContain('18:00 A')
   })
   it('ignores done/cancelled events', () => {
-    expect(slotReminder([occ('A', 10, 0, 'done')], now, now)).toBeNull()
+    expect(slotReminder([occ('A', 10, 0, 'done'), occ('B', 11, 0, 'cancelled')], now, now)).toBeNull()
   })
-  it('respects a custom window', () => {
-    const r = slotReminder([occ('A', 10)], now, now, 30)
-    expect(r).toBeNull() // 10:00 is 60 min after 09:00 → outside a 30-min window
-    const r2 = slotReminder([occ('A', 9, 20)], now, now, 30)
-    expect(r2).not.toBeNull()
+  it('caps the list at 5 lines and shows "+N more"', () => {
+    const r = slotReminder(
+      ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((t, i) => occ(t, 10 + i)),
+      now,
+      now
+    )
+    expect(r!.body).toContain('+2 more')
+    expect(r!.body).toContain('10:00 a')
+    expect(r!.body).toContain('14:00 e')
   })
-  it('constant is 120 minutes (documented 2h window)', () => {
-    expect(SLOT_WINDOW_MIN).toBe(120)
+  it('null when everything is already past', () => {
+    expect(slotReminder([occ('A', 8)], now, now)).toBeNull() // 8:00 < 9:00 now
   })
 })
 
@@ -64,7 +65,7 @@ describe('startupReminder', () => {
     const now = new Date(2026, 7, 14, 9, 50)
     const r = startupReminder([occ('Standup', 10)], now, 30)
     expect(r).not.toBeNull()
-    expect(r!.body).toContain('10 min')
+    expect(r!.body).toContain('Standup')
   })
   it('null when nothing within the lead time', () => {
     const now = new Date(2026, 7, 14, 9, 0)

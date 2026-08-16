@@ -1,6 +1,6 @@
 {
   "name": "activity-calendar",
-  "version": "1.11.11",
+  "version": "1.11.13",
   "description": "Rhythm \u2014 a personal activity planner & tracker (Google-Calendar-style desktop app)",
   "main": "out/main/index.js",
   "private": true,

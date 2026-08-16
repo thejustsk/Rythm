@@ -42,7 +42,8 @@ export function checkInState(
   return { award: true, streak, amount: CHECKIN_BASE * multiplier, multiplier }
 }
 
-/** "All planned done (or cancelled)" for a day: every planned block resolved. */
+/** "All planned done" for a day: every planned block is 'done' (cancelled
+ *  does NOT count — matches the streak/perfect rules). */
 export function allDoneCheck(planned: number, resolved: number): boolean {
   return planned > 0 && resolved === planned
 }

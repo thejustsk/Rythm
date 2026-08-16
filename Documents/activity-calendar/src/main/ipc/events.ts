@@ -23,6 +23,19 @@ export function rowToEvent(r: any): CalendarEvent {
   }
 }
 
+
+/** v1.11.12: every write path must keep end > start (the UI forms already
+ *  gate, but drag/resize and direct IPC calls bypass them). */
+function assertEndAfterStart(startLocal: string, endLocal: string): void {
+  const parse = (x: string) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(x)
+    return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : new Date(x)
+  }
+  if (parse(endLocal).getTime() <= parse(startLocal).getTime()) {
+    throw new Error('End must be after start')
+  }
+}
+
 export function registerEventHandlers(db: Db): void {
   ipcMain.handle('events:list', () => {
     return db.prepare('SELECT * FROM events ORDER BY start_local').all().map(rowToEvent)
@@ -34,6 +47,7 @@ export function registerEventHandlers(db: Db): void {
   })
 
   ipcMain.handle('events:create', (_e, input: EventInput) => {
+    assertEndAfterStart(input.startLocal, input.endLocal)
     const now = new Date().toISOString()
     const id = input.id ?? crypto.randomUUID()
     db.prepare(`
@@ -54,6 +68,7 @@ export function registerEventHandlers(db: Db): void {
   ipcMain.handle('events:update', (_e, id: string, patch: Partial<EventInput>) => {
     const existing = db.prepare('SELECT * FROM events WHERE id = ?').get(id) as any
     if (!existing) throw new Error('Event not found: ' + id)
+    assertEndAfterStart(patch.startLocal ?? existing.start_local, patch.endLocal ?? existing.end_local)
     const now = new Date().toISOString()
     const status = patch.status ?? existing.status
     const completedAt =

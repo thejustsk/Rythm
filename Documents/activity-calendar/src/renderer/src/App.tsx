@@ -95,6 +95,24 @@ export default function App() {
   // global keyboard shortcuts + cheat sheet (?)
   useEffect(() => installShortcuts(), [])
 
+  // v1.11.12: never-silent failures — any unhandled IPC/action error shows
+  // as a toast (previously it was an invisible console rejection)
+  useEffect(() => {
+    const onRej = (e: PromiseRejectionEvent) => {
+      const msg = e.reason?.message ?? String(e.reason ?? 'Unknown error')
+      useToasts.getState().push({ message: `Something went wrong: ${msg}`, kind: 'danger', duration: 5000 })
+    }
+    const onErr = (e: ErrorEvent) => {
+      if (e.message) useToasts.getState().push({ message: `Something went wrong: ${e.message}`, kind: 'danger', duration: 5000 })
+    }
+    window.addEventListener('unhandledrejection', onRej)
+    window.addEventListener('error', onErr)
+    return () => {
+      window.removeEventListener('unhandledrejection', onRej)
+      window.removeEventListener('error', onErr)
+    }
+  }, [])
+
   // v1.11.2: in-app reminders — the main process broadcasts every OS
   // notification here too, so reminders are ALWAYS visible in the app even
   // if Windows blocks the toast.

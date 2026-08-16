@@ -1,7 +1,19 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { BrowserWindow } from 'electron'
 import type { Db } from './db/connection'
 import { getDataDir } from './db/connection'
+
+/** v1.11.12: surface backup problems inside the app (never silently). */
+function notifyInApp(title: string, body: string): void {
+  try {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('notify:inapp', { title, body })
+    }
+  } catch {
+    /* non-fatal */
+  }
+}
 
 /** Automatic backups — M8. Copies the SQLite DB (via the safe SQLite backup
  *  API) into <dataDir>/backups, keeps the newest 14, and remembers the last
@@ -94,7 +106,9 @@ export async function runAutoBackup(db: Db): Promise<void> {
     if (last && Date.now() - new Date(last.value).getTime() < 24 * 3600 * 1000) return
     const res = await backupNow(db)
     console.log('[backup] auto backup:', res.ok ? 'created ' + res.path : 'failed', '· stored', res.count)
+    if (!res.ok) notifyInApp('Rhythm — Backup failed', 'Automatic backup could not be created. Check disk space / permissions (Settings → About → Back up now).')
   } catch (e) {
     console.error('[backup] auto backup error:', e)
+    notifyInApp('Rhythm — Backup failed', 'Automatic backup could not be created. Check disk space / permissions (Settings → About → Back up now).')
   }
 }

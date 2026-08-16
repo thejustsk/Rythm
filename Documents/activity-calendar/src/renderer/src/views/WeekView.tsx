@@ -91,6 +91,9 @@ export default function WeekView({ days }: Props) {
     const data = useData.getState()
     const toasts = useToasts.getState()
     if (ev.rrule && !d.occ.isOverride) {
+      // v1.11.12: the override's origin_date is the NEW day (where the block
+      // now lives) so streaks / "all planned done" / perfect-week count it on
+      // the correct day; the OLD day is exdated out of the series.
       await data.applyOverride(
         {
           title: ev.title,
@@ -104,7 +107,7 @@ export default function WeekView({ days }: Props) {
           rrule: null,
           exdates: [],
           parentId: ev.id,
-          originDate: d.occ.originDate
+          originDate: iso(day)
         },
         ev.id,
         [...(ev.exdates ?? []), d.occ.originDate]

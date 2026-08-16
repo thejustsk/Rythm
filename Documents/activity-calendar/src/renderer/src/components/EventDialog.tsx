@@ -332,7 +332,12 @@ export default function EventDialog() {
       (e) => e.parentId === master.id && e.originDate && e.originDate >= occ.originDate
     )
     await updateEvent(master.id, { rrule: rruleUntil(prevRrule, until) })
-    for (const c of children) await removeEvent(c.id)
+    // v1.11.12: refund + clear scores for every removed future occurrence
+    // (matches the "delete this occurrence" / "delete series" paths)
+    for (const c of children) {
+      await coins.clearScores(c.id)
+      await removeEvent(c.id)
+    }
     toasts.push({
       message: `Deleted "${master.title}" and upcoming`,
       kind: 'danger',

@@ -306,24 +306,15 @@ export function computeInsights(
 
   const daysArr = [...perDay.values()].sort((a, b) => a.date.localeCompare(b.date))
 
-  // ---- global pass (last 150 days): streak (skips empty days), first done ----
+  // ---- global pass (last 2000 days): streak (skips empty days), first done ----
+  // v1.11.12: the streak is computed over ALL events (label filters must NOT
+  // change the streak number) and matches the main streak rule: today is a
+  // GRACE day (planned-but-not-done today does not break it), a PAST day with
+  // planned-but-not-done does break it, empty days continue.
   const today = startOfDay(new Date())
   const gOccs = computeOccurrences(events, addDays(today, -2000), addDays(today, 1))
   const gDay = new Map<string, { planned: number; done: number }>()
-  const hiddenSet = new Set(hidden)
   for (const o of gOccs) {
-    if (o.event.status === 'cancelled') continue
-    // respect the label filters: hidden labels + the focused label
-    let top: Label | null = null
-    if (o.event.labelId) {
-      const l = labels.find((x) => x.id === o.event.labelId)
-      if (l) {
-        if (hiddenSet.has(l.id)) continue
-        top = l.parentId ? labels.find((x) => x.id === l.parentId) ?? l : l
-        if (top && hiddenSet.has(top.id)) continue
-      }
-    }
-    if (topLabelId && (top?.id ?? null) !== topLabelId) continue
     const dur = (o.end.getTime() - o.start.getTime()) / 60000
     const day = isoD(o.start)
     const g = gDay.get(day) ?? { planned: 0, done: 0 }
@@ -343,8 +334,8 @@ export function computeInsights(
       streakStart = isoD(day)
       continue
     }
-    if (p) break // planned but nothing done → streak broken
-    // no planned & no done → skip that day, streak continues
+    if (p && i > 0) break // a PAST day planned but nothing done → broken
+    // today with pending plans is a GRACE day (does not break); empty days continue
   }
   let firstDone: string | null = null
   for (const [date, g] of gDay) {
